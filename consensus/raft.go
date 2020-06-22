@@ -11,6 +11,7 @@ import (
 
 	"github.com/artor1os/dkv/persist"
 	"github.com/artor1os/dkv/rpc"
+	log "github.com/sirupsen/logrus"
 )
 
 type ApplyMsg struct {
@@ -128,6 +129,7 @@ type Raft struct {
 	notifyCh chan struct{}
 
 	applyCond *sync.Cond
+	logger *log.Entry
 }
 
 type role string
@@ -241,7 +243,8 @@ func (rf *Raft) isCandidateUptodate(lastLogIndex int, lastLogTerm int) bool {
 	return ret
 }
 
-func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) (err error) {
+	err = nil
 	rf.acceptNewerTerm(args.Term, args.CandidateId)
 	rf.mu.Lock()
 	reply.Term = rf.currentTerm
@@ -275,6 +278,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		// or granting vote to candidate: convert to candidate
 		rf.resetCh <- struct{}{}
 	}
+	return
 }
 
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
@@ -349,7 +353,8 @@ func Max(a, b int) int {
 	return b
 }
 
-func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) (err error) {
+	err = nil
 	rf.acceptNewerTerm(args.Term, args.LeaderId)
 	rf.mu.Lock()
 	reply.Term = rf.currentTerm
@@ -432,6 +437,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	reply.Success = true
 	rf.mu.Unlock()
+	return
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
@@ -458,7 +464,8 @@ func (rf *Raft) applySnapshot(snapshot []byte) {
 	rf.applyCh <- ApplyMsg{CommandValid: false, Snapshot: snapshot}
 }
 
-func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
+func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) (err error) {
+	err = nil
 	rf.acceptNewerTerm(args.Term, args.LeaderId)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -515,6 +522,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		rf.applySnapshot(args.Data)
 	}
 	rf.persist(args.Data)
+	return
 }
 
 func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) bool {
@@ -621,7 +629,7 @@ func (rf *Raft) appendEntries(server int) {
 		args.PrevLogIndex = rf.nextIndex[server] - 1
 		args.PrevLogTerm = rf.log.At(args.PrevLogIndex).Term
 		// If last log index >= nextIndex, then args.Entries will not be nil
-		// Otherwise, args.Entries == nil, and AppendEnties will be a heartbeat
+		// Otherwise, args.Entries == nil, and AppendEntries will be a heartbeat
 		args.Entries = rf.log.RangeFrom(rf.nextIndex[server])
 		reply := AppendEntriesReply{}
 		rf.mu.Unlock()
@@ -770,12 +778,13 @@ func (rf *Raft) wait() {
 				return
 			}
 			if rf.role == follower {
-				// [raft-paper]If eleciton timeout elapses without
+				// [raft-paper]If election timeout elapses without
 				// receiving AppendEntries RPC from current leader
 				// or granting vote to candidate: convert to candidate
 				rf.role = candidate
 			}
 			if rf.role == candidate {
+				rf.logger.Info("election timeout elapses, start new election")
 				// [raft-paper]If election timeout elapses: start new election
 				elected = rf.campaign()
 			}
@@ -790,6 +799,7 @@ func (rf *Raft) wait() {
 				continue
 			}
 			rf.role = leader
+			rf.logger.Info("elected to be leader")
 
 			rf.nextIndex = make([]int, len(rf.peers))
 			for i := range rf.nextIndex {
@@ -814,7 +824,6 @@ func (rf *Raft) Start(command interface{}) (index int, term int, isLeader bool) 
 	term = -1
 	isLeader = true
 
-	// Your code here (2B).
 	rf.mu.Lock()
 	if rf.role != leader {
 		isLeader = false
@@ -867,10 +876,11 @@ func NewRaft(peers []rpc.Endpoint, me int,
 	rf.persister = persister
 	rf.me = me
 
-	// Your initialization code here (2A, 2B, 2C).
 	rf.currentTerm = 0
 	rf.votedFor = -1
 	rf.role = follower
+
+	rf.logger = log.WithField("me", rf.me)
 
 	rf.resignCh = make(chan struct{})
 	rf.resetCh = make(chan struct{})

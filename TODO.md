@@ -1,0 +1,4 @@
+- [ ] ZooKeeper连接层
+- [ ] 用ZooKeeper取代shardmaster的配置
+- [ ] 实现kafka的log replication
+- [ ] 想办法模拟测试

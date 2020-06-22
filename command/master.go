@@ -2,6 +2,7 @@ package command
 
 import (
 	"net"
+	"strconv"
 
 	"github.com/artor1os/dkv/master"
 	"github.com/artor1os/dkv/persist"
@@ -23,7 +24,7 @@ type MasterOptions struct {
 
 func init() {
 	cmdMaster.Run = runMaster // break init cycle
-	m.port = cmdMaster.Flag.Int("port", 9333, "rpc listen port")
+	m.port = cmdMaster.Flag.Int("port", 8111, "rpc listen port")
 	m.ip = cmdMaster.Flag.String("ip", util.DetectedHostAddress(), "master <ip>|<server> address")
 	m.peers = cmdMaster.Flag.String("peers", "", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095")
 	m.me = cmdMaster.Flag.Int("me", 0, "my id")
@@ -49,7 +50,7 @@ func startMaster(options MasterOptions) {
 	if err := rpc.Register(s); err != nil {
 		panic(err)
 	}
-	if err := rpc.Start(net.JoinHostPort(*options.ip, string(*options.port))); err != nil {
+	if err := rpc.Start(net.JoinHostPort(*options.ip, strconv.Itoa(*options.port))); err != nil {
 		panic(err)
 	}
 	select {}

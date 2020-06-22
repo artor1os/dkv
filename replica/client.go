@@ -110,3 +110,15 @@ func (c *Client) Put(key string, value string) {
 func (c *Client) Append(key string, value string) {
 	c.PutAppend(key, value, "Append")
 }
+
+func (c *Client) Join(servers map[int][]string) {
+	c.sm.Join(servers)
+}
+
+func (c *Client) Leave(gids []int) {
+	c.sm.Leave(gids)
+}
+
+func (c *Client) Query(num int) master.Config {
+	return c.sm.Query(num)
+}

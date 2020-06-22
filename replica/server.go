@@ -2,6 +2,7 @@ package replica
 
 import (
 	"bytes"
+	"encoding/gob"
 	"encoding/json"
 	"sync"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/artor1os/dkv/master"
 	"github.com/artor1os/dkv/persist"
 	"github.com/artor1os/dkv/rpc"
+	log "github.com/sirupsen/logrus"
 )
 
 type Op struct {
@@ -62,6 +64,7 @@ type ShardKV struct {
 	mc *master.Client
 
 	sm *shardManager
+	logger *log.Entry
 }
 
 type shardManager struct {
@@ -175,7 +178,7 @@ func (kv *ShardKV) dataOfShard(shard int) map[string]string {
 	return data
 }
 
-func (kv *ShardKV) copyLastCommited() map[int64]int {
+func (kv *ShardKV) copyLastCommitted() map[int64]int {
 	r := make(map[int64]int)
 	for k, v := range kv.lastCommitted {
 		r[k] = v
@@ -193,7 +196,7 @@ func (kv *ShardKV) deleteShard(shard int) {
 
 func (kv *ShardKV) migrate(configNum int) {
 	for shard, servers := range kv.sm.MigratingShards[configNum] {
-		args := MigrateArgs{Shard: shard, Data: kv.dataOfShard(shard), Num: configNum, LastCommitted: kv.copyLastCommited()}
+		args := MigrateArgs{Shard: shard, Data: kv.dataOfShard(shard), Num: configNum, LastCommitted: kv.copyLastCommitted()}
 		go func(shard int, servers []string) {
 			si := 0
 			for {
@@ -216,7 +219,8 @@ func (kv *ShardKV) migrate(configNum int) {
 	}
 }
 
-func (kv *ShardKV) Migrate(args *MigrateArgs, reply *MigrateReply) {
+func (kv *ShardKV) Migrate(args *MigrateArgs, reply *MigrateReply) (err error) {
+	err = nil
 	kv.mu.Lock()
 	if args.Num > kv.sm.ConfigNum+1 {
 		reply.Err = ErrWrongLeader
@@ -243,6 +247,7 @@ func (kv *ShardKV) Migrate(args *MigrateArgs, reply *MigrateReply) {
 	op := kv.waitIndexCommit(index, 0, 0)
 
 	reply.Err = op.Err
+	return
 }
 
 func (kv *ShardKV) snapshot(index int) {
@@ -306,11 +311,11 @@ func (kv *ShardKV) apply() {
 }
 
 func (kv *ShardKV) isDup(op *Op) bool {
-	lastCommited, ok := kv.lastCommitted[op.CID]
+	lastCommitted, ok := kv.lastCommitted[op.CID]
 	if !ok {
 		return false
 	}
-	return op.RID <= lastCommited
+	return op.RID <= lastCommitted
 }
 
 func (kv *ShardKV) commit(op *Op) {
@@ -400,8 +405,7 @@ func (kv *ShardKV) waitIndexCommit(index int, cid int64, rid int) *Op {
 	}
 }
 
-func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
+func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) error {
 	kv.mu.Lock()
 	if !kv.shouldServe(args.Key) {
 		reply.Err = ErrWrongGroup
@@ -410,14 +414,17 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 		if _, isLeader := kv.rf.GetState(); !isLeader {
 			reply.Err = ErrWrongLeader
 		}
-		return
+		return nil
 	}
 	kv.mu.Unlock()
+	logger := kv.logger.WithField("key", args.Key)
+	logger.Info("try get")
 	newOp := Op{Type: GetOp, RID: args.RID, CID: args.CID, Key: args.Key}
 	index, _, isLeader := kv.rf.Start(newOp)
 	if !isLeader {
+		logger.Info("not leader")
 		reply.Err = ErrWrongLeader
-		return
+		return nil
 	}
 
 	// block on index
@@ -425,10 +432,10 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 
 	reply.Err = op.Err
 	reply.Value = op.Value
+	return nil
 }
 
-func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	kv.mu.Lock()
 	if !kv.shouldServe(args.Key) {
 		reply.Err = ErrWrongGroup
@@ -436,24 +443,24 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		if _, isLeader := kv.rf.GetState(); !isLeader {
 			reply.Err = ErrWrongLeader
 		}
-		return
+		return nil
 	}
 	kv.mu.Unlock()
+	logger := kv.logger.WithField("key", args.Key).WithField("value", args.Value).WithField("op", args.Op)
+	logger.Info("try put or append")
 	newOp := Op{Type: args.Op, RID: args.RID, CID: args.CID, Key: args.Key, Value: args.Value}
 	index, _, isLeader := kv.rf.Start(newOp)
 	if !isLeader {
+		logger.Info("not leader")
 		reply.Err = ErrWrongLeader
-		return
+		return nil
 	}
 
 	// block on index
 	op := kv.waitIndexCommit(index, args.CID, args.RID)
 
 	reply.Err = op.Err
-}
-
-func (kv *ShardKV) Kill() {
-	kv.rf.Kill()
+	return nil
 }
 
 func NewServer(servers []rpc.Endpoint, me int, persister persist.Persister, maxRaftState int, gid int, masters []rpc.Endpoint, makeEnd func(string) rpc.Endpoint) *ShardKV {
@@ -463,13 +470,17 @@ func NewServer(servers []rpc.Endpoint, me int, persister persist.Persister, maxR
 	kv.makeEnd = makeEnd
 	kv.gid = gid
 	kv.masters = masters
+	gob.Register(Op{})
+	kv.logger = log.WithField("me", kv.me).WithField("gid", kv.gid)
 
-	// Use something like this to talk to the shardmaster:
 	kv.mc = master.NewClient(kv.masters)
 	kv.sm = newShardManager(kv.gid)
 
 	kv.applyCh = make(chan consensus.ApplyMsg, 1)
 	kv.rf = consensus.NewRaft(servers, me, persister, kv.applyCh)
+	if err := rpc.Register(kv.rf); err != nil {
+		panic(err)
+	}
 	kv.store = make(map[string]string)
 	kv.indexCh = make(map[int]chan *Op)
 	kv.lastCommitted = make(map[int64]int)

@@ -2,6 +2,7 @@ package command
 
 import (
 	"net"
+	"strconv"
 
 	"github.com/artor1os/dkv/persist"
 	"github.com/artor1os/dkv/replica"
@@ -25,7 +26,7 @@ type ReplicaOptions struct {
 
 func init() {
 	cmdReplica.Run = runReplica
-	r.port = cmdReplica.Flag.Int("port", 9333, "rpc listen port")
+	r.port = cmdReplica.Flag.Int("port", 9111, "rpc listen port")
 	r.ip = cmdReplica.Flag.String("ip", util.DetectedHostAddress(), "replica <ip>|<server> address")
 	r.peers = cmdReplica.Flag.String("peers", "", "all replica nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095")
 	r.masters = cmdReplica.Flag.String("masters", "", "all master nodes")
@@ -57,7 +58,7 @@ func startReplica(options ReplicaOptions) {
 	if err := rpc.Register(s); err != nil {
 		panic(err)
 	}
-	if err := rpc.Start(net.JoinHostPort(*options.ip, string(*options.port))); err != nil {
+	if err := rpc.Start(net.JoinHostPort(*options.ip, strconv.Itoa(*options.port))); err != nil {
 		panic(err)
 	}
 	select {}

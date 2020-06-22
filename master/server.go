@@ -1,6 +1,7 @@
 package master
 
 import (
+	"encoding/gob"
 	"sync"
 	"time"
 
@@ -222,7 +223,7 @@ func (sm *ShardMaster) applyOp(op *Op) {
 	}
 }
 
-func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
+func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) error {
 	servers := make(map[int][]string)
 	for k, v := range args.Servers {
 		servers[k] = v
@@ -231,48 +232,51 @@ func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
 	index, _, isLeader := sm.rf.Start(newOp)
 	if !isLeader {
 		reply.WrongLeader = true
-		return
+		return nil
 	}
 
 	op := sm.waitIndexCommit(index, args.CID, args.RID)
 
 	reply.WrongLeader = op.WrongLeader
+	return nil
 }
 
-func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
+func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) error {
 	gids := make([]int, len(args.GIDs))
 	copy(gids, args.GIDs)
 	newOp := Op{Type: LeaveOp, RID: args.RID, CID: args.CID, Leave: &LeaveInfo{GIDs: gids}}
 	index, _, isLeader := sm.rf.Start(newOp)
 	if !isLeader {
 		reply.WrongLeader = true
-		return
+		return nil
 	}
 
 	op := sm.waitIndexCommit(index, args.CID, args.RID)
 
 	reply.WrongLeader = op.WrongLeader
+	return nil
 }
 
-func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
+func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) error {
 	newOp := Op{Type: MoveOp, RID: args.RID, CID: args.CID, Move: &MoveInfo{Shard: args.Shard, GID: args.GID}}
 	index, _, isLeader := sm.rf.Start(newOp)
 	if !isLeader {
 		reply.WrongLeader = true
-		return
+		return nil
 	}
 
 	op := sm.waitIndexCommit(index, args.CID, args.RID)
 
 	reply.WrongLeader = op.WrongLeader
+	return nil
 }
 
-func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
+func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) error {
 	newOp := Op{Type: QueryOp, RID: args.RID, CID: args.CID, Query: &QueryInfo{Num: args.Num}}
 	index, _, isLeader := sm.rf.Start(newOp)
 	if !isLeader {
 		reply.WrongLeader = true
-		return
+		return nil
 	}
 
 	op := sm.waitIndexCommit(index, args.CID, args.RID)
@@ -281,25 +285,22 @@ func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
 	if !reply.WrongLeader {
 		reply.Config = op.QueryResult.Config
 	}
-}
-
-func (sm *ShardMaster) Kill() {
-	sm.rf.Kill()
-}
-
-func (sm *ShardMaster) Raft() *consensus.Raft {
-	return sm.rf
+	return nil
 }
 
 func NewServer(servers []rpc.Endpoint, me int, persister persist.Persister) *ShardMaster {
 	sm := new(ShardMaster)
 	sm.me = me
+	gob.Register(Op{})
 
 	sm.configs = make([]Config, 1)
 	sm.configs[0].Groups = map[int][]string{}
 
 	sm.applyCh = make(chan consensus.ApplyMsg, 1)
 	sm.rf = consensus.NewRaft(servers, me, persister, sm.applyCh)
+	if err := rpc.Register(sm.rf); err != nil {
+		panic(err)
+	}
 	sm.lastCommitted = make(map[int64]int)
 	sm.indexCh = make(map[int]chan *Op)
 
