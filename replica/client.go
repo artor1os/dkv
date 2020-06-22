@@ -33,10 +33,10 @@ type Client struct {
 	cid     int64
 }
 
-func NewClient(masters []rpc.Endpoint, make_end func(string) rpc.Endpoint) *Client {
+func NewClient(masters []rpc.Endpoint, makeEnd func(string) rpc.Endpoint) *Client {
 	c := new(Client)
 	c.sm = master.NewClient(masters)
-	c.makeEnd = make_end
+	c.makeEnd = makeEnd
 	c.cid = nrand()
 	return c
 }

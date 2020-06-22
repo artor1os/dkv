@@ -748,10 +748,6 @@ func (rf *Raft) campaign() (elected chan struct{}) {
 	return
 }
 
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
-
 func RandIntRange(left int, right int) int {
 	return left + rand.Intn(right-left)
 }
