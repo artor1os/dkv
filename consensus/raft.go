@@ -908,5 +908,9 @@ func NewRaft(peers []rpc.Endpoint, me int,
 	go rf.wait()
 	go rf.apply()
 
+	if err := rpc.Register(rf); err != nil {
+		panic(err)
+	}
+
 	return rf
 }

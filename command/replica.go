@@ -54,10 +54,7 @@ func startReplica(options ReplicaOptions) {
 	if err != nil {
 		panic(err)
 	}
-	s := replica.NewServer(servers, *options.me, persist.New(*options.dataDir), 1000, *options.gid, masters, rpc.MakeEndpoint)
-	if err := rpc.Register(s); err != nil {
-		panic(err)
-	}
+	replica.NewServer(servers, *options.me, persist.New(*options.dataDir), 1000, *options.gid, masters, rpc.MakeEndpoint)
 	if err := rpc.Start(net.JoinHostPort(*options.ip, strconv.Itoa(*options.port))); err != nil {
 		panic(err)
 	}

@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"net/rpc"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -23,6 +24,7 @@ func (e *endpoint) Call(method string, args interface{}, reply interface{}) bool
 		e.cli, err = rpc.DialHTTP("tcp", e.addr)
 		if err != nil {
 			log.WithError(err).WithField("addr", e.addr).Warnf("retry connecting to server")
+			time.Sleep(time.Second)
 			// TODO
 		}
 	}

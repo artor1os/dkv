@@ -8,13 +8,15 @@ import (
 	"github.com/artor1os/dkv/consensus"
 	"github.com/artor1os/dkv/persist"
 	"github.com/artor1os/dkv/rpc"
+	"github.com/artor1os/dkv/zookeeper"
 )
 
 type ShardMaster struct {
 	mu      sync.Mutex
 	me      int
-	rf      *consensus.Raft
+	cons    consensus.Consensus
 	applyCh chan consensus.ApplyMsg
+	zk zookeeper.Controller
 
 	configs []Config // indexed by config num
 
@@ -81,7 +83,11 @@ func (sm *ShardMaster) apply() {
 			ch = make(chan *Op, 1)
 			sm.indexCh[am.CommandIndex] = ch
 		}
-		sm.applyOp(&op)
+		if sm.zk != nil {
+			sm.applyOpZK(&op)
+		} else {
+			sm.applyOp(&op)
+		}
 		ch <- &op
 		sm.mu.Unlock()
 	}
@@ -128,6 +134,22 @@ func (sm *ShardMaster) newConfig() *Config {
 	}
 
 	return newConf
+}
+
+func (sm *ShardMaster) newConfigZK() (*Config, error) {
+	index, err := sm.zk.Last(zookeeper.ConfigPath)
+	if err != nil {
+		if err == zookeeper.ErrNoChildren || err == zookeeper.ErrNodeNotExist {
+			return &Config{Num: 1, Groups: map[int][]string{}}, nil
+		}
+		return nil, err
+	}
+	config := Config{}
+	if err := sm.zk.Index(zookeeper.ConfigPath, &config, index); err != nil {
+		return nil, err
+	}
+	config.Num++
+	return &config, nil
 }
 
 func rebalance(config *Config) {
@@ -223,19 +245,83 @@ func (sm *ShardMaster) applyOp(op *Op) {
 	}
 }
 
+func (sm *ShardMaster) applyOpZK(op *Op) {
+	switch op.Type {
+	case JoinOp:
+		if !sm.isDup(op) {
+			config, err := sm.newConfigZK()
+			if err != nil {
+				panic(err)
+			}
+			for k, v := range op.Join.Servers {
+				config.Groups[k] = v
+			}
+			rebalance(config)
+			if err := sm.zk.Sequence(zookeeper.ConfigPath, config, config.Num); err != nil {
+				panic(err)
+			}
+		}
+	case LeaveOp:
+		if !sm.isDup(op) {
+			config, err := sm.newConfigZK()
+			if err != nil {
+				panic(err)
+			}
+			for _, k := range op.Leave.GIDs {
+				delete(config.Groups, k)
+			}
+			rebalance(config)
+			if err := sm.zk.Sequence(zookeeper.ConfigPath, config, config.Num); err != nil {
+				panic(err)
+			}
+		}
+	case MoveOp:
+		if !sm.isDup(op) {
+			config, err := sm.newConfigZK()
+			if err != nil {
+				panic(err)
+			}
+			config.Shards[op.Move.Shard] = op.Move.GID
+			sm.configs = append(sm.configs, *config)
+		}
+	case QueryOp:
+		index := op.Query.Num
+		last, err := sm.zk.Last(zookeeper.ConfigPath)
+		if err == zookeeper.ErrNoChildren || err == zookeeper.ErrNodeNotExist {
+			op.QueryResult = &QueryResult{Config:Config{Groups: map[int][]string{}}}
+		} else if err != nil {
+			panic(err)
+		} else {
+			if index < 0 || index > last {
+				index = last
+			}
+			config := Config{}
+			if err := sm.zk.Index(zookeeper.ConfigPath, &config, index); err != nil {
+				panic(err)
+			}
+			op.QueryResult = &QueryResult{Config: config}
+		}
+	}
+	if !sm.isDup(op) {
+		sm.commit(op)
+	}
+}
+
+func (sm *ShardMaster) start(op Op) *Op {
+	index, _, isLeader := sm.cons.Start(op)
+	if !isLeader {
+		return &Op{WrongLeader: true}
+	}
+	return sm.waitIndexCommit(index, op.CID, op.RID)
+}
+
 func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) error {
 	servers := make(map[int][]string)
 	for k, v := range args.Servers {
 		servers[k] = v
 	}
 	newOp := Op{Type: JoinOp, RID: args.RID, CID: args.CID, Join: &JoinInfo{Servers: servers}}
-	index, _, isLeader := sm.rf.Start(newOp)
-	if !isLeader {
-		reply.WrongLeader = true
-		return nil
-	}
-
-	op := sm.waitIndexCommit(index, args.CID, args.RID)
+	op := sm.start(newOp)
 
 	reply.WrongLeader = op.WrongLeader
 	return nil
@@ -245,13 +331,7 @@ func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) error {
 	gids := make([]int, len(args.GIDs))
 	copy(gids, args.GIDs)
 	newOp := Op{Type: LeaveOp, RID: args.RID, CID: args.CID, Leave: &LeaveInfo{GIDs: gids}}
-	index, _, isLeader := sm.rf.Start(newOp)
-	if !isLeader {
-		reply.WrongLeader = true
-		return nil
-	}
-
-	op := sm.waitIndexCommit(index, args.CID, args.RID)
+	op := sm.start(newOp)
 
 	reply.WrongLeader = op.WrongLeader
 	return nil
@@ -259,13 +339,7 @@ func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) error {
 
 func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) error {
 	newOp := Op{Type: MoveOp, RID: args.RID, CID: args.CID, Move: &MoveInfo{Shard: args.Shard, GID: args.GID}}
-	index, _, isLeader := sm.rf.Start(newOp)
-	if !isLeader {
-		reply.WrongLeader = true
-		return nil
-	}
-
-	op := sm.waitIndexCommit(index, args.CID, args.RID)
+	op := sm.start(newOp)
 
 	reply.WrongLeader = op.WrongLeader
 	return nil
@@ -273,13 +347,7 @@ func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) error {
 
 func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) error {
 	newOp := Op{Type: QueryOp, RID: args.RID, CID: args.CID, Query: &QueryInfo{Num: args.Num}}
-	index, _, isLeader := sm.rf.Start(newOp)
-	if !isLeader {
-		reply.WrongLeader = true
-		return nil
-	}
-
-	op := sm.waitIndexCommit(index, args.CID, args.RID)
+	op := sm.start(newOp)
 
 	reply.WrongLeader = op.WrongLeader
 	if !reply.WrongLeader {
@@ -297,14 +365,32 @@ func NewServer(servers []rpc.Endpoint, me int, persister persist.Persister) *Sha
 	sm.configs[0].Groups = map[int][]string{}
 
 	sm.applyCh = make(chan consensus.ApplyMsg, 1)
-	sm.rf = consensus.NewRaft(servers, me, persister, sm.applyCh)
-	if err := rpc.Register(sm.rf); err != nil {
-		panic(err)
-	}
+	sm.cons = consensus.NewRaft(servers, me, persister, sm.applyCh)
 	sm.lastCommitted = make(map[int64]int)
 	sm.indexCh = make(map[int]chan *Op)
 
 	go sm.apply()
+	if err := rpc.Register(sm); err != nil {
+		panic(err)
+	}
+
+	return sm
+}
+
+func NewServerWithZK(zk zookeeper.Controller) *ShardMaster {
+	sm := new(ShardMaster)
+	gob.Register(Op{})
+
+	sm.applyCh = make(chan consensus.ApplyMsg, 1)
+	sm.cons = consensus.NewTrivial(sm.applyCh)
+	sm.zk = zk
+	sm.lastCommitted = make(map[int64]int)
+	sm.indexCh = make(map[int]chan *Op)
+
+	go sm.apply()
+	if err := rpc.Register(sm); err != nil {
+		panic(err)
+	}
 
 	return sm
 }

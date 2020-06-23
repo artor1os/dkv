@@ -478,15 +478,15 @@ func NewServer(servers []rpc.Endpoint, me int, persister persist.Persister, maxR
 
 	kv.applyCh = make(chan consensus.ApplyMsg, 1)
 	kv.rf = consensus.NewRaft(servers, me, persister, kv.applyCh)
-	if err := rpc.Register(kv.rf); err != nil {
-		panic(err)
-	}
 	kv.store = make(map[string]string)
 	kv.indexCh = make(map[int]chan *Op)
 	kv.lastCommitted = make(map[int64]int)
 
 	go kv.apply()
 	go kv.pollConfig()
+	if err := rpc.Register(kv); err != nil {
+		panic(err)
+	}
 
 	return kv
 }

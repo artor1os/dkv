@@ -8,6 +8,7 @@ import (
 	"github.com/artor1os/dkv/persist"
 	"github.com/artor1os/dkv/rpc"
 	"github.com/artor1os/dkv/util"
+	"github.com/artor1os/dkv/zookeeper"
 )
 
 var (
@@ -20,6 +21,7 @@ type MasterOptions struct {
 	peers   *string
 	me      *int
 	dataDir *string
+	zk *string
 }
 
 func init() {
@@ -29,6 +31,7 @@ func init() {
 	m.peers = cmdMaster.Flag.String("peers", "", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095")
 	m.me = cmdMaster.Flag.Int("me", 0, "my id")
 	m.dataDir = cmdMaster.Flag.String("dataDir", "/var/lib/dkv", "data directory")
+	m.zk = cmdMaster.Flag.String("zk", "", "zk servers")
 }
 
 var cmdMaster = &Command{
@@ -42,13 +45,18 @@ func runMaster(cmd *Command, args []string) bool {
 }
 
 func startMaster(options MasterOptions) {
-	eps, err := rpc.MakeEndpoints(util.ParsePeers(*options.peers))
-	if err != nil {
-		panic(err)
-	}
-	s := master.NewServer(eps, *options.me, persist.New(*options.dataDir))
-	if err := rpc.Register(s); err != nil {
-		panic(err)
+	if *options.zk == "" {
+		eps, err := rpc.MakeEndpoints(util.ParsePeers(*options.peers))
+		if err != nil {
+			panic(err)
+		}
+		master.NewServer(eps, *options.me, persist.New(*options.dataDir))
+	} else {
+		zk, err := zookeeper.New(util.ParsePeers(*options.zk))
+		if err != nil {
+			panic(err)
+		}
+		master.NewServerWithZK(zk)
 	}
 	if err := rpc.Start(net.JoinHostPort(*options.ip, strconv.Itoa(*options.port))); err != nil {
 		panic(err)
