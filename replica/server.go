@@ -77,18 +77,18 @@ type shardManager struct {
 }
 
 func newShardManager(gid int) *shardManager {
-	sm := &shardManager{GID: gid, ServedShards: newSet(), WaitingShards: newSet(), MigratingShards: make(map[int]map[int][]string)}
+	sm := &shardManager{GID: gid, ConfigNum: -1, ServedShards: newSet(), WaitingShards: newSet(), MigratingShards: make(map[int]map[int][]string)}
 	return sm
 }
 
 func (sm *shardManager) Update(config *master.Config) {
 	sm.MigratingShards[config.Num] = make(map[int][]string)
 	for shard := 0; shard < master.NShards; shard++ {
-		if sm.ConfigNum > 0 && !sm.ServedShards.Contain(shard) && config.Shards[shard] == sm.GID {
+		if config.Num > 0 && !sm.ServedShards.Contain(shard) && config.Shards[shard] == sm.GID {
 			sm.WaitingShards.Add(shard)
 		}
 
-		if sm.ConfigNum > 0 && sm.ServedShards.Contain(shard) && config.Shards[shard] != sm.GID {
+		if config.Num > 0 && sm.ServedShards.Contain(shard) && config.Shards[shard] != sm.GID {
 			sm.MigratingShards[config.Num][shard] = config.Groups[config.Shards[shard]]
 		}
 

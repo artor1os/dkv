@@ -122,6 +122,9 @@ func (sm *ShardMaster) isDup(op *Op) bool {
 }
 
 func (sm *ShardMaster) newConfig() *Config {
+	if len(sm.configs) == 0 {
+		return  &Config{Groups: map[int][]string{}}
+	}
 	config := sm.configs[len(sm.configs)-1]
 	newConf := &Config{}
 	newConf.Num = config.Num + 1
@@ -140,7 +143,7 @@ func (sm *ShardMaster) newConfigZK() (*Config, error) {
 	index, err := sm.zk.Last(zookeeper.ConfigPath)
 	if err != nil {
 		if err == zookeeper.ErrNoChildren || err == zookeeper.ErrNodeNotExist {
-			return &Config{Num: 1, Groups: map[int][]string{}}, nil
+			return &Config{Groups: map[int][]string{}}, nil
 		}
 		return nil, err
 	}
@@ -234,11 +237,18 @@ func (sm *ShardMaster) applyOp(op *Op) {
 			sm.configs = append(sm.configs, *config)
 		}
 	case QueryOp:
-		index := op.Query.Num
-		if op.Query.Num < 0 || op.Query.Num >= len(sm.configs) {
-			index = len(sm.configs) - 1
+		if len(sm.configs) == 0 {
+			op.QueryResult = &QueryResult{Config:Config{
+				Num:    -1,
+				Groups: map[int][]string{},
+			}}
+		} else {
+			index := op.Query.Num
+			if index < 0 || index >= len(sm.configs) {
+				index = len(sm.configs) - 1
+			}
+			op.QueryResult = &QueryResult{Config: sm.configs[index]}
 		}
-		op.QueryResult = &QueryResult{Config: sm.configs[index]}
 	}
 	if !sm.isDup(op) {
 		sm.commit(op)
@@ -288,7 +298,7 @@ func (sm *ShardMaster) applyOpZK(op *Op) {
 		index := op.Query.Num
 		last, err := sm.zk.Last(zookeeper.ConfigPath)
 		if err == zookeeper.ErrNoChildren || err == zookeeper.ErrNodeNotExist {
-			op.QueryResult = &QueryResult{Config:Config{Groups: map[int][]string{}}}
+			op.QueryResult = &QueryResult{Config:Config{Num: -1, Groups: map[int][]string{}}}
 		} else if err != nil {
 			panic(err)
 		} else {
@@ -360,9 +370,6 @@ func NewServer(servers []rpc.Endpoint, me int, persister persist.Persister) *Sha
 	sm := new(ShardMaster)
 	sm.me = me
 	gob.Register(Op{})
-
-	sm.configs = make([]Config, 1)
-	sm.configs[0].Groups = map[int][]string{}
 
 	sm.applyCh = make(chan consensus.ApplyMsg, 1)
 	sm.cons = consensus.NewRaft(servers, me, persister, sm.applyCh)
