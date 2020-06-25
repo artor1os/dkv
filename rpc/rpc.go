@@ -4,7 +4,6 @@ import (
 	"net"
 	"net/http"
 	"net/rpc"
-	"time"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -15,21 +14,16 @@ type Endpoint interface {
 
 type endpoint struct {
 	addr string
-	cli *rpc.Client
 }
 
 func (e *endpoint) Call(method string, args interface{}, reply interface{}) bool {
-	var err error
-	for e.cli == nil {
-		e.cli, err = rpc.DialHTTP("tcp", e.addr)
-		if err != nil {
-			log.WithError(err).WithField("addr", e.addr).Warnf("retry connecting to server")
-			time.Sleep(time.Second)
-			// TODO
-		}
+	cli, err := rpc.DialHTTP("tcp", e.addr)
+	if err != nil {
+		log.WithError(err).WithField("addr", e.addr).Error("failed to connect rpc server")
+		return false
 	}
 
-	err = e.cli.Call(method, args, reply)
+	err = cli.Call(method, args, reply)
 	if err != nil {
 		log.WithError(err).Error("rpc error")
 		return false
@@ -38,13 +32,13 @@ func (e *endpoint) Call(method string, args interface{}, reply interface{}) bool
 }
 
 func MakeEndpoint(peer string) Endpoint {
-	return &endpoint{addr:peer}
+	return &endpoint{addr: peer}
 }
 
 func MakeEndpoints(peers []string) ([]Endpoint, error) {
 	var endpoints []Endpoint
 	for _, p := range peers {
-		endpoints = append(endpoints, &endpoint{addr:p})
+		endpoints = append(endpoints, &endpoint{addr: p})
 	}
 	return endpoints, nil
 }
