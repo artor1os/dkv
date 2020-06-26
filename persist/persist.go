@@ -16,7 +16,7 @@ type Persister interface {
 type memory struct {
 	mu sync.Mutex
 
-	state []byte
+	state    []byte
 	snapshot []byte
 }
 

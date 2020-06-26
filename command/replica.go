@@ -8,6 +8,7 @@ import (
 	"github.com/artor1os/dkv/replica"
 	"github.com/artor1os/dkv/rpc"
 	"github.com/artor1os/dkv/util"
+	"github.com/artor1os/dkv/zookeeper"
 )
 
 var (
@@ -22,6 +23,8 @@ type ReplicaOptions struct {
 	me      *int
 	gid     *int
 	dataDir *string
+	zk      *string
+	isr     *int
 }
 
 func init() {
@@ -33,6 +36,8 @@ func init() {
 	r.me = cmdReplica.Flag.Int("me", 0, "my id")
 	r.gid = cmdReplica.Flag.Int("gid", 100, "my group id")
 	r.dataDir = cmdReplica.Flag.String("dataDir", "/var/lib/dkv", "data directory")
+	r.zk = cmdReplica.Flag.String("zk", "", "zk servers")
+	r.isr = cmdReplica.Flag.Int("isr", 2, "minimum in-sync replica to agree")
 }
 
 var cmdReplica = &Command{
@@ -54,7 +59,15 @@ func startReplica(options ReplicaOptions) {
 	if err != nil {
 		panic(err)
 	}
-	replica.NewServer(servers, *options.me, persist.New(*options.dataDir), 1000, *options.gid, masters, rpc.MakeEndpoint)
+	if *options.zk == "" {
+		replica.NewServer(servers, *options.me, persist.New(*options.dataDir), 1000, *options.gid, masters, rpc.MakeEndpoint)
+	} else {
+		zk, err := zookeeper.New(util.ParsePeers(*options.zk))
+		if err != nil {
+			panic(err)
+		}
+		replica.NewServerZK(servers, *options.me, persist.New(*options.dataDir), *options.gid, masters, rpc.MakeEndpoint, zk, *options.isr)
+	}
 	if err := rpc.Start(net.JoinHostPort(*options.ip, strconv.Itoa(*options.port))); err != nil {
 		panic(err)
 	}

@@ -112,7 +112,7 @@ type Raft struct {
 	log *Logs // log entries; each entry contains command for state machine, and term when entry was received by leader(first index is 1)
 
 	// Volatile state on all servers
-	commitIndex int // index of highest log entry known to be commited(initialized to 0, increases monotonically)
+	commitIndex int // index of highest log entry known to be committed(initialized to 0, increases monotonically)
 	lastApplied int // index of highest log entry applied to state machine(initialized to 0, increases monotonically)
 
 	// Volatile state on leaders
@@ -129,7 +129,7 @@ type Raft struct {
 	notifyCh chan struct{}
 
 	applyCond *sync.Cond
-	logger *log.Entry
+	logger    *log.Entry
 }
 
 type role string
@@ -225,7 +225,7 @@ func (rf *Raft) acceptNewerTerm(inTerm int, vote int) {
 
 func (rf *Raft) isCandidateUptodate(lastLogIndex int, lastLogTerm int) bool {
 	// [raft-paper, up-to-date]
-	// Raft determines which of two logs is more up-to-date by comparing the index and temr of
+	// Raft determines which of two logs is more up-to-date by comparing the index and term of
 	// the last entries in the logs. If the logs have last entries with different terms, then the log
 	// with the later term is more up-to-date. If the logs end with the same term, then whichever log is longer
 	// is more up-to-date
@@ -374,7 +374,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 	if rf.role == follower {
 		// [raft-paper, follower]
-		// If eleciton timeout elapses without
+		// If election timeout elapses without
 		// receiving AppendEntries RPC from current leader
 		// or granting vote to candidate: convert to candidate
 		rf.mu.Unlock()
@@ -484,7 +484,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	}
 	if rf.role == follower {
 		// [raft-paper, follower]
-		// If eleciton timeout elapses without
+		// If election timeout elapses without
 		// receiving AppendEntries RPC from current leader
 		// or granting vote to candidate: convert to candidate
 		rf.mu.Unlock()
@@ -819,9 +819,8 @@ func (rf *Raft) wait() {
 	}
 }
 
-func (rf *Raft) Start(command interface{}) (index int, term int, isLeader bool) {
+func (rf *Raft) Start(command interface{}) (index int, isLeader bool) {
 	index = -1
-	term = -1
 	isLeader = true
 
 	rf.mu.Lock()
@@ -832,7 +831,6 @@ func (rf *Raft) Start(command interface{}) (index int, term int, isLeader bool) 
 	}
 
 	index = rf.log.Len()
-	term = rf.currentTerm
 	isLeader = true
 	// [raft-paper]If command received from client: append entry to local log,
 	// respond after entry applied to state machine
@@ -846,7 +844,7 @@ func (rf *Raft) Start(command interface{}) (index int, term int, isLeader bool) 
 
 	rf.notifyCh <- struct{}{}
 
-	return index, term, isLeader
+	return index, isLeader
 }
 
 // DiscardOldLog discards all log entries before index(exclusively)

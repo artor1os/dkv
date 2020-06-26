@@ -11,6 +11,8 @@ import (
 	"github.com/artor1os/dkv/master"
 	"github.com/artor1os/dkv/persist"
 	"github.com/artor1os/dkv/rpc"
+	"github.com/artor1os/dkv/util"
+	"github.com/artor1os/dkv/zookeeper"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -49,7 +51,7 @@ type ConfigInfo struct {
 type ShardKV struct {
 	mu           sync.Mutex
 	me           int
-	rf           *consensus.Raft
+	cons         consensus.Consensus
 	applyCh      chan consensus.ApplyMsg
 	makeEnd      func(string) rpc.Endpoint
 	gid          int
@@ -63,21 +65,21 @@ type ShardKV struct {
 
 	mc *master.Client
 
-	sm *shardManager
+	sm     *shardManager
 	logger *log.Entry
 }
 
 type shardManager struct {
 	GID           int
 	ConfigNum     int
-	ServedShards  set
-	WaitingShards set
+	ServedShards  util.Set
+	WaitingShards util.Set
 	// configNum -> shard -> servers
 	MigratingShards map[int]map[int][]string
 }
 
 func newShardManager(gid int) *shardManager {
-	sm := &shardManager{GID: gid, ConfigNum: -1, ServedShards: newSet(), WaitingShards: newSet(), MigratingShards: make(map[int]map[int][]string)}
+	sm := &shardManager{GID: gid, ConfigNum: -1, ServedShards: util.NewSet(), WaitingShards: util.NewSet(), MigratingShards: make(map[int]map[int][]string)}
 	return sm
 }
 
@@ -119,37 +121,6 @@ func (sm *shardManager) Migrate(configNum int, shard int) {
 	delete(sm.MigratingShards[configNum], shard)
 }
 
-type set map[int]bool
-
-func (s set) Contain(i int) bool {
-	_, ok := s[i]
-	return ok
-}
-
-func (s set) Add(i int) bool {
-	if s.Contain(i) {
-		return false
-	}
-	s[i] = true
-	return true
-}
-
-func (s set) Delete(i int) {
-	delete(s, i)
-}
-
-func (s set) Empty() bool {
-	r := false
-	for _, b := range s {
-		r = r || b
-	}
-	return !r
-}
-
-func newSet() set {
-	return make(map[int]bool)
-}
-
 func (kv *ShardKV) shouldServe(key string) bool {
 	shard := key2shard(key)
 	return kv.sm.ShouldServe(shard)
@@ -163,7 +134,7 @@ func (kv *ShardKV) pollConfig() {
 		// No lock is needed here, data race is acceptable
 		config := kv.mc.Query(kv.sm.ConfigNum + 1)
 		if !kv.sm.Waiting() && config.Num > kv.sm.ConfigNum {
-			kv.rf.Start(Op{Type: ConfigOp, Config: &ConfigInfo{Config: &config}})
+			kv.cons.Start(Op{Type: ConfigOp, Config: &ConfigInfo{Config: &config}})
 		}
 	}
 }
@@ -237,7 +208,7 @@ func (kv *ShardKV) Migrate(args *MigrateArgs, reply *MigrateReply) (err error) {
 	for k, v := range args.LastCommitted {
 		lastCommited[k] = v
 	}
-	index, _, isLeader := kv.rf.Start(Op{Type: MigrateOp, Migrate: &MigrateInfo{Data: data, Shard: args.Shard, Num: args.Num, LastCommitted: lastCommited}})
+	index, isLeader := kv.cons.Start(Op{Type: MigrateOp, Migrate: &MigrateInfo{Data: data, Shard: args.Shard, Num: args.Num, LastCommitted: lastCommited}})
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return
@@ -259,7 +230,7 @@ func (kv *ShardKV) snapshot(index int) {
 	_ = e.Encode(kv.sm)
 
 	data := w.Bytes()
-	go kv.rf.DiscardOldLog(index, data)
+	go kv.cons.DiscardOldLog(index, data)
 }
 
 func (kv *ShardKV) recover(snapshot []byte) {
@@ -410,17 +381,13 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) error {
 	if !kv.shouldServe(args.Key) {
 		reply.Err = ErrWrongGroup
 		kv.mu.Unlock()
-		// Optimization, maybe useless?
-		if _, isLeader := kv.rf.GetState(); !isLeader {
-			reply.Err = ErrWrongLeader
-		}
 		return nil
 	}
 	kv.mu.Unlock()
 	logger := kv.logger.WithField("key", args.Key)
 	logger.Info("try get")
 	newOp := Op{Type: GetOp, RID: args.RID, CID: args.CID, Key: args.Key}
-	index, _, isLeader := kv.rf.Start(newOp)
+	index, isLeader := kv.cons.Start(newOp)
 	if !isLeader {
 		logger.Info("not leader")
 		reply.Err = ErrWrongLeader
@@ -440,16 +407,13 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	if !kv.shouldServe(args.Key) {
 		reply.Err = ErrWrongGroup
 		kv.mu.Unlock()
-		if _, isLeader := kv.rf.GetState(); !isLeader {
-			reply.Err = ErrWrongLeader
-		}
 		return nil
 	}
 	kv.mu.Unlock()
 	logger := kv.logger.WithField("key", args.Key).WithField("value", args.Value).WithField("op", args.Op)
 	logger.Info("try put or append")
 	newOp := Op{Type: args.Op, RID: args.RID, CID: args.CID, Key: args.Key, Value: args.Value}
-	index, _, isLeader := kv.rf.Start(newOp)
+	index, isLeader := kv.cons.Start(newOp)
 	if !isLeader {
 		logger.Info("not leader")
 		reply.Err = ErrWrongLeader
@@ -477,7 +441,39 @@ func NewServer(servers []rpc.Endpoint, me int, persister persist.Persister, maxR
 	kv.sm = newShardManager(kv.gid)
 
 	kv.applyCh = make(chan consensus.ApplyMsg, 1)
-	kv.rf = consensus.NewRaft(servers, me, persister, kv.applyCh)
+	kv.cons = consensus.NewRaft(servers, me, persister, kv.applyCh)
+	kv.store = make(map[string]string)
+	kv.indexCh = make(map[int]chan *Op)
+	kv.lastCommitted = make(map[int64]int)
+
+	go kv.apply()
+	go kv.pollConfig()
+	if err := rpc.Register(kv); err != nil {
+		panic(err)
+	}
+
+	return kv
+}
+
+func NewServerZK(servers []rpc.Endpoint, me int, persister persist.Persister, gid int, masters []rpc.Endpoint, makeEnd func(string) rpc.Endpoint,
+	zk zookeeper.Controller, isr int) *ShardKV {
+	kv := new(ShardKV)
+	kv.me = me
+	kv.maxRaftState = -1
+	kv.makeEnd = makeEnd
+	kv.gid = gid
+	kv.masters = masters
+	gob.Register(Op{})
+	kv.logger = log.WithField("me", kv.me).WithField("gid", kv.gid)
+
+	kv.mc = master.NewClient(kv.masters)
+	kv.sm = newShardManager(kv.gid)
+
+	kv.applyCh = make(chan consensus.ApplyMsg)
+	kv.cons = consensus.NewZK(servers, me, persister, kv.applyCh,
+		zk, isr, zookeeper.MakeGroupPath(zookeeper.ElectionPath, gid),
+		zookeeper.MakeGroupPath(zookeeper.ISRPath, gid),
+		zookeeper.MakeGroupPath(zookeeper.CommitIndexPath, gid))
 	kv.store = make(map[string]string)
 	kv.indexCh = make(map[int]chan *Op)
 	kv.lastCommitted = make(map[int64]int)

@@ -16,7 +16,7 @@ type ShardMaster struct {
 	me      int
 	cons    consensus.Consensus
 	applyCh chan consensus.ApplyMsg
-	zk zookeeper.Controller
+	zk      zookeeper.Controller
 
 	configs []Config // indexed by config num
 
@@ -123,7 +123,7 @@ func (sm *ShardMaster) isDup(op *Op) bool {
 
 func (sm *ShardMaster) newConfig() *Config {
 	if len(sm.configs) == 0 {
-		return  &Config{Groups: map[int][]string{}}
+		return &Config{Groups: map[int][]string{}}
 	}
 	config := sm.configs[len(sm.configs)-1]
 	newConf := &Config{}
@@ -238,7 +238,7 @@ func (sm *ShardMaster) applyOp(op *Op) {
 		}
 	case QueryOp:
 		if len(sm.configs) == 0 {
-			op.QueryResult = &QueryResult{Config:Config{
+			op.QueryResult = &QueryResult{Config: Config{
 				Num:    -1,
 				Groups: map[int][]string{},
 			}}
@@ -298,7 +298,7 @@ func (sm *ShardMaster) applyOpZK(op *Op) {
 		index := op.Query.Num
 		last, err := sm.zk.Last(zookeeper.ConfigPath)
 		if err == zookeeper.ErrNoChildren || err == zookeeper.ErrNodeNotExist {
-			op.QueryResult = &QueryResult{Config:Config{Num: -1, Groups: map[int][]string{}}}
+			op.QueryResult = &QueryResult{Config: Config{Num: -1, Groups: map[int][]string{}}}
 		} else if err != nil {
 			panic(err)
 		} else {
@@ -318,7 +318,7 @@ func (sm *ShardMaster) applyOpZK(op *Op) {
 }
 
 func (sm *ShardMaster) start(op Op) *Op {
-	index, _, isLeader := sm.cons.Start(op)
+	index, isLeader := sm.cons.Start(op)
 	if !isLeader {
 		return &Op{WrongLeader: true}
 	}

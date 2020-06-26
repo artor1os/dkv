@@ -21,7 +21,7 @@ type MasterOptions struct {
 	peers   *string
 	me      *int
 	dataDir *string
-	zk *string
+	zk      *string
 }
 
 func init() {
