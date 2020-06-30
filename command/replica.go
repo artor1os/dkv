@@ -4,6 +4,7 @@ import (
 	"net"
 	"strconv"
 
+	"github.com/artor1os/dkv/master"
 	"github.com/artor1os/dkv/persist"
 	"github.com/artor1os/dkv/replica"
 	"github.com/artor1os/dkv/rpc"
@@ -40,7 +41,7 @@ func init() {
 	r.dataDir = cmdReplica.Flag.String("dataDir", "/var/lib/dkv", "data directory")
 	r.zk = cmdReplica.Flag.String("zk", "", "zk servers")
 	r.isr = cmdReplica.Flag.Int("isr", 2, "minimum in-sync replica to agree")
-	r.schema = cmdReplica.Flag.String("schema", "raft", "replica schema, raft or kafka")
+	r.schema = cmdReplica.Flag.String("schema", "raft", "replica schema, raft or zk")
 }
 
 var cmdReplica = &Command{
@@ -69,18 +70,53 @@ func startReplica(options ReplicaOptions) {
 	if err := rpc.Start(addr); err != nil {
 		panic(err)
 	}
-	for {
-		if err := zk.Register(zookeeper.GroupPath, *options.gid, *options.me, addr, nil); err != nil {
-			log.WithError(err).
-				WithField("gid", *options.gid).
-				WithField("me", *options.me).
-				Info("failed to register replica")
-			continue
+	initJoin := func() error {
+		m := master.NewClient(masters)
+		m.Join(map[int]int{*options.gid: *options.peers})
+		return nil
+	}
+	initZK := func() error {
+		if *options.schema == "zk" {
+			util.WaitSuccess(func() error {
+				return zk.CreateIfNotExist(zookeeper.ISRPath)
+			}, nil, nil)
+			util.WaitSuccess(func() error {
+				return zk.CreateIfNotExist(zookeeper.CommitIndexPath)
+			}, nil, nil)
+			isrPath := zookeeper.MakeGroupPath(zookeeper.ISRPath, *options.gid)
+			commitPath := zookeeper.MakeGroupPath(zookeeper.CommitIndexPath, *options.gid)
+			util.WaitSuccess(func() error {
+				return zk.CreateIfNotExist(isrPath, func() error {
+					for p := 0; p < *options.peers; p++ {
+						go util.WaitSuccess(func() error {
+							return zk.Add(isrPath, p)
+						}, nil, nil)
+					}
+					return nil
+				})
+			}, nil, nil)
+			util.WaitSuccess(func() error {
+				return zk.CreateIfNotExist(commitPath, func() error {
+					util.WaitSuccess(func() error {
+						return zk.SetData(commitPath, []byte(strconv.Itoa(0)))
+					}, nil, nil)
+					return nil
+				})
+			}, nil, nil)
 		}
+		return nil
+	}
+	util.WaitSuccess(func() error {
+		return zk.Register(zookeeper.GroupPath, *options.gid, *options.me, addr, initJoin, initZK)
+	}, func() {
+		log.WithError(err).
+			WithField("gid", *options.gid).
+			WithField("me", *options.me).
+			Info("failed to register replica")
+	}, func() {
 		log.WithField("gid", *options.gid).
 			WithField("me", *options.me).
 			Info("successfully registered replica")
-		break
-	}
+	})
 	select {}
 }

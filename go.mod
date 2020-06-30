@@ -6,4 +6,5 @@ require (
 	github.com/gin-gonic/gin v1.6.3
 	github.com/samuel/go-zookeeper v0.0.0-20190923202752-2cc03de413da
 	github.com/sirupsen/logrus v1.6.0
+	golang.org/x/sync v0.0.0-20200625203802-6e8e738ad208
 )

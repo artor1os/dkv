@@ -62,15 +62,14 @@ func startMaster(options MasterOptions) {
 	if err := rpc.Start(addr); err != nil {
 		panic(err)
 	}
-	for {
-		if err := zk.Register(zookeeper.MasterPath, 0, *options.me, addr, nil); err != nil {
-			log.WithError(err).
-				WithField("me", *options.me).
-				Info("failed to register master")
-			continue
-		}
+	util.WaitSuccess(func() error {
+		return zk.Register(zookeeper.MasterPath, 0, *options.me, addr)
+	}, func() {
+		log.WithError(err).
+			WithField("me", *options.me).
+			Info("failed to register master")
+	}, func() {
 		log.WithField("me", *options.me).Info("successfully registered master")
-		break
-	}
+	})
 	select {}
 }

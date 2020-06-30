@@ -7,10 +7,13 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/samuel/go-zookeeper/zk"
 )
 
 type Controller interface {
+	CreateIfNotExist(string, ...func() error) error
 	Sequence(string, []byte, int) error
 	Index(string, int) ([]byte, error)
 	Last(string) (int, error)
@@ -21,7 +24,7 @@ type Controller interface {
 	ElectLeader(string, chan<- error)
 	SetData(string, []byte) error
 	Data(string) ([]byte, error)
-	Register(string, int, int, string, func() error) error
+	Register(string, int, int, string, ...func() error) error
 	Find(string, int, int) (string, error)
 }
 
@@ -44,15 +47,22 @@ func New(addrs []string) (*cli, error) {
 
 var defaultACL = zk.WorldACL(zk.PermAll)
 
-func (c *cli) CreateIfNotExist(path string) error {
+func (c *cli) CreateIfNotExist(path string, initHooks ...func() error) error {
 	exist, _, err := c.conn.Exists(path)
 	if err != nil {
 		return err
 	}
 	if !exist {
 		_, err = c.conn.Create(path, nil, 0, defaultACL)
-		if err != nil {
+		if err != nil && !errors.Is(err, zk.ErrNodeExists){
 			return err
+		}
+		if err == nil {
+			var group errgroup.Group
+			for _, h := range initHooks {
+				group.Go(h)
+			}
+			return group.Wait()
 		}
 	}
 	return nil
@@ -266,41 +276,21 @@ func (c *cli) Data(path string) ([]byte, error) {
 	return b, nil
 }
 
-func (c *cli) Register(path string, gid int, id int, addr string, initHook func() error) error {
+func (c *cli) Register(path string, gid int, id int, addr string, initHooks ...func() error) error {
 	if err := c.CreateIfNotExist(path); err != nil && !errors.Is(err, zk.ErrNodeExists) {
 		return fmt.Errorf("path: %v, err: %w", path, err)
 	}
-	shouldInit := false
 	path = path + "/" + strconv.Itoa(gid)
-	exist, _, err := c.conn.Exists(path)
-	if err != nil {
+	if err := c.CreateIfNotExist(path, initHooks...); err != nil {
 		return err
-	}
-	if !exist {
-		_, err = c.conn.Create(path, nil, 0, defaultACL)
-		if err != nil && !errors.Is(err, zk.ErrNodeExists) {
-			return fmt.Errorf("path: %v, err: %w", path, err)
-		}
-		if err == nil {
-			shouldInit = true
-		}
-	}
-	// NOTE: maybe race
-
-	children, _, err := c.conn.Children(path)
-	if len(children) == 0 {
-		shouldInit = true
 	}
 
 	path = path + "/" + strconv.Itoa(id)
-	_, err = c.conn.Create(path, []byte(addr), zk.FlagEphemeral, defaultACL)
+	_, err := c.conn.Create(path, []byte(addr), zk.FlagEphemeral, defaultACL)
 	if err != nil {
 		return fmt.Errorf("path: %v, err: %w", path, err)
 	}
 
-	if shouldInit && initHook != nil {
-		return initHook()
-	}
 	return nil
 }
 

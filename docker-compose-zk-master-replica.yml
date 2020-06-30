@@ -1,0 +1,48 @@
+version: '3'
+
+services:
+  zk:
+    image: zookeeper
+  master:
+    image: dkv
+    command: "master -ip=master -port=8111 -zk='zk:2181' -schema='zk'"
+    build: .
+    depends_on:
+      - zk
+  client:
+    image: dkv
+    ports:
+      - 8080:8080
+    command: "client -ip=client -port=8080 -zk='zk:2181' -masters=1"
+    depends_on:
+      - zk
+  replica00:
+    image: dkv
+    command: "replica -ip=replica00 -port=9111 -zk='zk:2181' -peers=3 -me=0 -gid=100 -masters=1 -schema='zk'"
+    depends_on:
+      - zk
+  replica01:
+    image: dkv
+    command: "replica -ip=replica01 -port=9111 -zk='zk:2181' -peers=3 -me=1 -gid=100 -masters=1 -schema='zk'"
+    depends_on:
+      - zk
+  replica02:
+    image: dkv
+    command: "replica -ip=replica02 -port=9111 -zk='zk:2181' -peers=3 -me=2 -gid=100 -masters=1 -schema='zk'"
+    depends_on:
+      - zk
+  replica10:
+    image: dkv
+    command: "replica -ip=replica10 -port=9111 -zk='zk:2181' -peers=3 -me=0 -gid=101 -masters=1 -schema='zk'"
+    depends_on:
+      - zk
+  replica11:
+    image: dkv
+    command: "replica -ip=replica11 -port=9111 -zk='zk:2181' -peers=3 -me=1 -gid=101 -masters=1 -schema='zk'"
+    depends_on:
+      - zk
+  replica12:
+    image: dkv
+    command: "replica -ip=replica12 -port=9111 -zk='zk:2181' -peers=3 -me=2 -gid=101 -masters=1 -schema='zk'"
+    depends_on:
+      - zk
