@@ -10,6 +10,7 @@ const (
 	ConfigPath      = "/config"
 	CommitIndexPath = "/commit"
 	GroupPath = "/group"
+	MasterPath = "/master"
 )
 
 func MakeGroupPath(root string, gid int) string {

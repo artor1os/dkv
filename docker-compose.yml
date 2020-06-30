@@ -1,36 +1,58 @@
 version: '3'
 
 services:
+  zk:
+    image: zookeeper
   master0:
     image: dkv
-    command: "master -ip=master0 -port=8111 -peers='master0:8111,master1:8111,master2:8111' -me=0"
+    command: "master -ip=master0 -port=8111 -zk='zk:2181' -peers=3 -me=0"
     build: .
+    depends_on:
+      - zk
   master1:
     image: dkv
-    command: "master -ip=master1 -port=8111 -peers='master0:8111,master1:8111,master2:8111' -me=1"
+    command: "master -ip=master1 -port=8111 -zk='zk:2181' -peers=3 -me=1"
+    depends_on:
+      - zk
   master2:
     image: dkv
-    command: "master -ip=master2 -port=8111 -peers='master0:8111,master1:8111,master2:8111' -me=2"
-  replica00:
-    image: dkv
-    command: "replica -ip=replica00 -port=9111 -peers='replica00:9111,replica01:9111,replica02:9111' -me=0 -gid=100 -masters='master0:8111,master1:8111,master2:8111'"
-  replica01:
-    image: dkv
-    command: "replica -ip=replica01 -port=9111 -peers='replica00:9111,replica01:9111,replica02:9111' -me=1 -gid=100 -masters='master0:8111,master1:8111,master2:8111'"
-  replica02:
-    image: dkv
-    command: "replica -ip=replica02 -port=9111 -peers='replica00:9111,replica01:9111,replica02:9111' -me=2 -gid=100 -masters='master0:8111,master1:8111,master2:8111'"
-  replica10:
-    image: dkv
-    command: "replica -ip=replica10 -port=9111 -peers='replica10:9111,replica11:9111,replica12:9111' -me=0 -gid=101 -masters='master0:8111,master1:8111,master2:8111'"
-  replica11:
-    image: dkv
-    command: "replica -ip=replica11 -port=9111 -peers='replica10:9111,replica11:9111,replica12:9111' -me=1 -gid=101 -masters='master0:8111,master1:8111,master2:8111'"
-  replica12:
-    image: dkv
-    command: "replica -ip=replica12 -port=9111 -peers='replica10:9111,replica11:9111,replica12:9111' -me=2 -gid=101 -masters='master0:8111,master1:8111,master2:8111'"
+    command: "master -ip=master2 -port=8111 -zk='zk:2181' -peers=3 -me=2"
+    depends_on:
+      - zk
   client:
     image: dkv
     ports:
-    - 8080:8080
-    command: "client -ip=client -port=8080 -masters='master0:8111,master1:8111,master2:8111'"
+      - 8080:8080
+    command: "client -ip=client -port=8080 -zk='zk:2181' -masters=3"
+    depends_on:
+      - zk
+  replica00:
+    image: dkv
+    command: "replica -ip=replica00 -port=9111 -zk='zk:2181' -peers=3 -me=0 -gid=100 -masters=3"
+    depends_on:
+      - zk
+  replica01:
+    image: dkv
+    command: "replica -ip=replica01 -port=9111 -zk='zk:2181' -peers=3 -me=1 -gid=100 -masters=3"
+    depends_on:
+      - zk
+  replica02:
+    image: dkv
+    command: "replica -ip=replica02 -port=9111 -zk='zk:2181' -peers=3 -me=2 -gid=100 -masters=3"
+    depends_on:
+      - zk
+  replica10:
+    image: dkv
+    command: "replica -ip=replica10 -port=9111 -zk='zk:2181' -peers=3 -me=0 -gid=101 -masters=3"
+    depends_on:
+      - zk
+  replica11:
+    image: dkv
+    command: "replica -ip=replica11 -port=9111 -zk='zk:2181' -peers=3 -me=1 -gid=101 -masters=3"
+    depends_on:
+      - zk
+  replica12:
+    image: dkv
+    command: "replica -ip=replica12 -port=9111 -zk='zk:2181' -peers=3 -me=2 -gid=101 -masters=3"
+    depends_on:
+      - zk

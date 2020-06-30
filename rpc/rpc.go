@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/rpc"
 
+	"github.com/artor1os/dkv/zookeeper"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -14,9 +15,30 @@ type Endpoint interface {
 
 type endpoint struct {
 	addr string
+
+	path string
+	gid int
+	me int
+	zk zookeeper.Controller
 }
 
 func (e *endpoint) Call(method string, args interface{}, reply interface{}) bool {
+	if e.addr == "" {
+		for {
+			addr, err := e.zk.Find(e.path, e.gid, e.me)
+			if err != nil {
+				log.WithError(err).
+					WithField("path", e.path).
+					WithField("gid", e.gid).
+					WithField("me", e.me).
+					Info("failed to find")
+				continue
+			}
+			e.addr = addr
+			break
+		}
+	}
+
 	cli, err := rpc.DialHTTP("tcp", e.addr)
 	if err != nil {
 		log.WithError(err).WithField("addr", e.addr).Error("failed to connect rpc server")
@@ -31,16 +53,16 @@ func (e *endpoint) Call(method string, args interface{}, reply interface{}) bool
 	return true
 }
 
-func MakeEndpoint(peer string) Endpoint {
-	return &endpoint{addr: peer}
+func MakeEndpoints(zk zookeeper.Controller, path string, gid int, peers int) []Endpoint {
+	var endpoints []Endpoint
+	for p := 0; p < peers; p++ {
+		endpoints = append(endpoints, &endpoint{zk: zk, path: path, gid: gid, me: p})
+	}
+	return endpoints
 }
 
-func MakeEndpoints(peers []string) ([]Endpoint, error) {
-	var endpoints []Endpoint
-	for _, p := range peers {
-		endpoints = append(endpoints, &endpoint{addr: p})
-	}
-	return endpoints, nil
+func MakeEndpointsReplica(zk zookeeper.Controller, gid int, peers int) []Endpoint {
+	return MakeEndpoints(zk, zookeeper.GroupPath, gid, peers)
 }
 
 func Register(rcvr interface{}) error {

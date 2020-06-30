@@ -1,5 +1,6 @@
-- [ ] ZooKeeper连接层
-- [ ] 用ZooKeeper取代shardmaster的配置
+- [x] ZooKeeper连接层
+- [x] 用ZooKeeper取代shardmaster的配置
 - [ ] 实现kafka的log replication
 - [ ] 想办法模拟测试
 - [ ] 实现初始化：Join Group，创建zookeeper节点，把replica group中所有节点加入ISR
+- [ ] 用zk实现服务发现，新增一个线程监控服务注册，有新的group则自动Join，config里面删去group

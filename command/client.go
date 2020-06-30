@@ -7,6 +7,7 @@ import (
 	"github.com/artor1os/dkv/replica"
 	"github.com/artor1os/dkv/rpc"
 	"github.com/artor1os/dkv/util"
+	"github.com/artor1os/dkv/zookeeper"
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
 )
@@ -18,14 +19,16 @@ var (
 type ClientOptions struct {
 	port    *int
 	ip      *string
-	masters *string
+	masters *int
+	zk *string
 }
 
 func init() {
 	cmdClient.Run = runClient
 	c.port = cmdClient.Flag.Int("port", 8080, "http listen port")
 	c.ip = cmdClient.Flag.String("ip", util.DetectedHostAddress(), "client <ip>|<server> address")
-	c.masters = cmdClient.Flag.String("masters", "", "all master nodes")
+	c.masters = cmdClient.Flag.Int("masters", 3, "number of masters")
+	c.zk = cmdClient.Flag.String("zk", "", "zookeeper servers")
 }
 
 var cmdClient = &Command{
@@ -38,15 +41,16 @@ func runClient(cmd *Command, args []string) bool {
 	return true
 }
 
-type joinArg map[int][]string
+type joinArg map[int]int
 type leaveArg []int
 
 func startClient(options ClientOptions) {
-	masters, err := rpc.MakeEndpoints(util.ParsePeers(*options.masters))
+	zk, err := zookeeper.New(util.ParsePeers(*options.zk))
 	if err != nil {
 		panic(err)
 	}
-	cli := replica.NewClient(masters, rpc.MakeEndpoint)
+	masters := rpc.MakeEndpoints(zk, zookeeper.MasterPath, 0, *options.masters)
+	cli := replica.NewClient(masters, rpc.MakeEndpointsReplica, zk)
 	r := gin.Default()
 
 	r.GET("/get", func(c *gin.Context) {

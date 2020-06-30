@@ -7,6 +7,7 @@ import (
 
 	"github.com/artor1os/dkv/master"
 	"github.com/artor1os/dkv/rpc"
+	"github.com/artor1os/dkv/zookeeper"
 )
 
 func key2shard(key string) int {
@@ -28,15 +29,17 @@ func nrand() int64 {
 type Client struct {
 	sm      *master.Client
 	config  master.Config
-	makeEnd func(string) rpc.Endpoint
+	makeEnds func(zookeeper.Controller, int, int) []rpc.Endpoint
+	zk zookeeper.Controller
 	rid     int
 	cid     int64
 }
 
-func NewClient(masters []rpc.Endpoint, makeEnd func(string) rpc.Endpoint) *Client {
+func NewClient(masters []rpc.Endpoint, makeEnds func(zookeeper.Controller, int, int) []rpc.Endpoint, zk zookeeper.Controller) *Client {
 	c := new(Client)
 	c.sm = master.NewClient(masters)
-	c.makeEnd = makeEnd
+	c.makeEnds = makeEnds
+	c.zk = zk
 	c.cid = nrand()
 	return c
 }
@@ -51,10 +54,11 @@ func (c *Client) Get(key string) string {
 	for {
 		shard := key2shard(key)
 		gid := c.config.Shards[shard]
-		if servers, ok := c.config.Groups[gid]; ok {
+		if peers, ok := c.config.Groups[gid]; ok {
 			// try each server for the shard.
+			servers := c.makeEnds(c.zk, gid, peers)
 			for si := 0; si < len(servers); si++ {
-				srv := c.makeEnd(servers[si])
+				srv := servers[si]
 				var reply GetReply
 				ok := srv.Call("ShardKV.Get", &args, &reply)
 				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
@@ -84,9 +88,10 @@ func (c *Client) PutAppend(key string, value string, op string) {
 	for {
 		shard := key2shard(key)
 		gid := c.config.Shards[shard]
-		if servers, ok := c.config.Groups[gid]; ok {
+		if peers, ok := c.config.Groups[gid]; ok {
+			servers := c.makeEnds(c.zk, gid, peers)
 			for si := 0; si < len(servers); si++ {
-				srv := c.makeEnd(servers[si])
+				srv := servers[si]
 				var reply PutAppendReply
 				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
 				if ok && reply.Err == OK {
@@ -111,7 +116,7 @@ func (c *Client) Append(key string, value string) {
 	c.PutAppend(key, value, "Append")
 }
 
-func (c *Client) Join(servers map[int][]string) {
+func (c *Client) Join(servers map[int]int) {
 	c.sm.Join(servers)
 }
 

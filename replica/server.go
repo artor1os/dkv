@@ -53,7 +53,7 @@ type ShardKV struct {
 	me           int
 	cons         consensus.Consensus
 	applyCh      chan consensus.ApplyMsg
-	makeEnd      func(string) rpc.Endpoint
+	makeEnds      func(zookeeper.Controller, int, int) []rpc.Endpoint
 	gid          int
 	masters      []rpc.Endpoint
 	maxRaftState int // snapshot if log grows this big
@@ -67,6 +67,7 @@ type ShardKV struct {
 
 	sm     *shardManager
 	logger *log.Entry
+	zk zookeeper.Controller
 }
 
 type shardManager struct {
@@ -74,24 +75,30 @@ type shardManager struct {
 	ConfigNum     int
 	ServedShards  util.Set
 	WaitingShards util.Set
-	// configNum -> shard -> servers
-	MigratingShards map[int]map[int][]string
+	// configNum -> shard -> groupInfo
+	MigratingShards map[int]map[int]groupInfo
+}
+
+type groupInfo struct {
+	GID int
+	Peers int
 }
 
 func newShardManager(gid int) *shardManager {
-	sm := &shardManager{GID: gid, ConfigNum: -1, ServedShards: util.NewSet(), WaitingShards: util.NewSet(), MigratingShards: make(map[int]map[int][]string)}
+	sm := &shardManager{GID: gid, ConfigNum: -1, ServedShards: util.NewSet(), WaitingShards: util.NewSet(), MigratingShards: make(map[int]map[int]groupInfo)}
 	return sm
 }
 
 func (sm *shardManager) Update(config *master.Config) {
-	sm.MigratingShards[config.Num] = make(map[int][]string)
+	sm.MigratingShards[config.Num] = make(map[int]groupInfo)
 	for shard := 0; shard < master.NShards; shard++ {
 		if config.Num > 0 && !sm.ServedShards.Contain(shard) && config.Shards[shard] == sm.GID {
 			sm.WaitingShards.Add(shard)
 		}
 
 		if config.Num > 0 && sm.ServedShards.Contain(shard) && config.Shards[shard] != sm.GID {
-			sm.MigratingShards[config.Num][shard] = config.Groups[config.Shards[shard]]
+			gid := config.Shards[shard]
+			sm.MigratingShards[config.Num][shard] = groupInfo{gid, config.Groups[gid]}
 		}
 
 		if config.Shards[shard] != sm.GID {
@@ -166,14 +173,15 @@ func (kv *ShardKV) deleteShard(shard int) {
 }
 
 func (kv *ShardKV) migrate(configNum int) {
-	for shard, servers := range kv.sm.MigratingShards[configNum] {
+	for shard, groupInfo := range kv.sm.MigratingShards[configNum] {
 		args := MigrateArgs{Shard: shard, Data: kv.dataOfShard(shard), Num: configNum, LastCommitted: kv.copyLastCommitted()}
-		go func(shard int, servers []string) {
+		go func(shard int, gid int, peers int) {
+			var servers []rpc.Endpoint
+			servers = kv.makeEnds(kv.zk, gid, peers)
 			si := 0
 			for {
 				reply := MigrateReply{}
-				server := kv.makeEnd(servers[si])
-				ok := server.Call("ShardKV.Migrate", &args, &reply)
+				ok := servers[si].Call("ShardKV.Migrate", &args, &reply)
 				if ok && reply.Err == OK {
 					break
 				}
@@ -186,7 +194,7 @@ func (kv *ShardKV) migrate(configNum int) {
 				kv.deleteShard(shard)
 			}
 			kv.mu.Unlock()
-		}(shard, servers)
+		}(shard, groupInfo.GID, groupInfo.Peers)
 	}
 }
 
@@ -427,11 +435,13 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	return nil
 }
 
-func NewServer(servers []rpc.Endpoint, me int, persister persist.Persister, maxRaftState int, gid int, masters []rpc.Endpoint, makeEnd func(string) rpc.Endpoint) *ShardKV {
+func NewServer(servers []rpc.Endpoint, me int, persister persist.Persister,
+	maxRaftState int, gid int, masters []rpc.Endpoint,
+	makeEnds func(zookeeper.Controller, int, int) []rpc.Endpoint, zk zookeeper.Controller) *ShardKV {
 	kv := new(ShardKV)
 	kv.me = me
 	kv.maxRaftState = maxRaftState
-	kv.makeEnd = makeEnd
+	kv.makeEnds = makeEnds
 	kv.gid = gid
 	kv.masters = masters
 	gob.Register(Op{})
@@ -445,6 +455,7 @@ func NewServer(servers []rpc.Endpoint, me int, persister persist.Persister, maxR
 	kv.store = make(map[string]string)
 	kv.indexCh = make(map[int]chan *Op)
 	kv.lastCommitted = make(map[int64]int)
+	kv.zk = zk
 
 	go kv.apply()
 	go kv.pollConfig()
@@ -455,12 +466,13 @@ func NewServer(servers []rpc.Endpoint, me int, persister persist.Persister, maxR
 	return kv
 }
 
-func NewServerZK(servers []rpc.Endpoint, me int, persister persist.Persister, gid int, masters []rpc.Endpoint, makeEnd func(string) rpc.Endpoint,
+func NewServerZK(servers []rpc.Endpoint, me int, persister persist.Persister,
+	gid int, masters []rpc.Endpoint, makeEnds func(zookeeper.Controller, int, int) []rpc.Endpoint,
 	zk zookeeper.Controller, isr int) *ShardKV {
 	kv := new(ShardKV)
 	kv.me = me
 	kv.maxRaftState = -1
-	kv.makeEnd = makeEnd
+	kv.makeEnds = makeEnds
 	kv.gid = gid
 	kv.masters = masters
 	gob.Register(Op{})
@@ -477,6 +489,7 @@ func NewServerZK(servers []rpc.Endpoint, me int, persister persist.Persister, gi
 	kv.store = make(map[string]string)
 	kv.indexCh = make(map[int]chan *Op)
 	kv.lastCommitted = make(map[int64]int)
+	kv.zk = zk
 
 	go kv.apply()
 	go kv.pollConfig()

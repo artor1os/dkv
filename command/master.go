@@ -9,6 +9,7 @@ import (
 	"github.com/artor1os/dkv/rpc"
 	"github.com/artor1os/dkv/util"
 	"github.com/artor1os/dkv/zookeeper"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -18,20 +19,22 @@ var (
 type MasterOptions struct {
 	port    *int
 	ip      *string
-	peers   *string
+	peers   *int
 	me      *int
 	dataDir *string
 	zk      *string
+	schema *string
 }
 
 func init() {
 	cmdMaster.Run = runMaster // break init cycle
 	m.port = cmdMaster.Flag.Int("port", 8111, "rpc listen port")
 	m.ip = cmdMaster.Flag.String("ip", util.DetectedHostAddress(), "master <ip>|<server> address")
-	m.peers = cmdMaster.Flag.String("peers", "", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095")
+	m.peers = cmdMaster.Flag.Int("peers", 3, "number of peers")
 	m.me = cmdMaster.Flag.Int("me", 0, "my id")
 	m.dataDir = cmdMaster.Flag.String("dataDir", "/var/lib/dkv", "data directory")
 	m.zk = cmdMaster.Flag.String("zk", "", "zk servers")
+	m.schema = cmdMaster.Flag.String("schema", "raft", "raft or zk")
 }
 
 var cmdMaster = &Command{
@@ -45,21 +48,29 @@ func runMaster(cmd *Command, args []string) bool {
 }
 
 func startMaster(options MasterOptions) {
-	if *options.zk == "" {
-		eps, err := rpc.MakeEndpoints(util.ParsePeers(*options.peers))
-		if err != nil {
-			panic(err)
-		}
+	zk, err := zookeeper.New(util.ParsePeers(*options.zk))
+	if err != nil {
+		panic(err)
+	}
+	if *options.schema == "raft" {
+		eps := rpc.MakeEndpoints(zk, zookeeper.MasterPath, 0, *options.peers)
 		master.NewServer(eps, *options.me, persist.New(*options.dataDir))
 	} else {
-		zk, err := zookeeper.New(util.ParsePeers(*options.zk))
-		if err != nil {
-			panic(err)
-		}
 		master.NewServerWithZK(zk)
 	}
-	if err := rpc.Start(net.JoinHostPort(*options.ip, strconv.Itoa(*options.port))); err != nil {
+	addr := net.JoinHostPort(*options.ip, strconv.Itoa(*options.port))
+	if err := rpc.Start(addr); err != nil {
 		panic(err)
+	}
+	for {
+		if err := zk.Register(zookeeper.MasterPath, 0, *options.me, addr, nil); err != nil {
+			log.WithError(err).
+				WithField("me", *options.me).
+				Info("failed to register master")
+			continue
+		}
+		log.WithField("me", *options.me).Info("successfully registered master")
+		break
 	}
 	select {}
 }

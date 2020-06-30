@@ -6,7 +6,7 @@ const NShards = 10
 type Config struct {
 	Num    int              // config number
 	Shards [NShards]int     // shard -> gid
-	Groups map[int][]string // gid -> servers[]
+	Groups map[int]int // gid -> peers
 }
 
 const (
@@ -16,7 +16,7 @@ const (
 type Err string
 
 type JoinArgs struct {
-	Servers map[int][]string // new GID -> servers mappings
+	Servers map[int]int // new GID -> peers
 
 	RID int
 	CID int64

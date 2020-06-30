@@ -2,6 +2,7 @@ package master
 
 import (
 	"encoding/gob"
+	"encoding/json"
 	"sync"
 	"time"
 
@@ -41,7 +42,7 @@ type Op struct {
 }
 
 type JoinInfo struct {
-	Servers map[int][]string
+	Servers map[int]int
 }
 
 type LeaveInfo struct {
@@ -123,12 +124,12 @@ func (sm *ShardMaster) isDup(op *Op) bool {
 
 func (sm *ShardMaster) newConfig() *Config {
 	if len(sm.configs) == 0 {
-		return &Config{Groups: map[int][]string{}}
+		return &Config{Groups: map[int]int{}}
 	}
 	config := sm.configs[len(sm.configs)-1]
 	newConf := &Config{}
 	newConf.Num = config.Num + 1
-	newConf.Groups = make(map[int][]string)
+	newConf.Groups = make(map[int]int)
 	for i := 0; i < NShards; i++ {
 		newConf.Shards[i] = config.Shards[i]
 	}
@@ -143,12 +144,16 @@ func (sm *ShardMaster) newConfigZK() (*Config, error) {
 	index, err := sm.zk.Last(zookeeper.ConfigPath)
 	if err != nil {
 		if err == zookeeper.ErrNoChildren || err == zookeeper.ErrNodeNotExist {
-			return &Config{Groups: map[int][]string{}}, nil
+			return &Config{Groups: map[int]int{}}, nil
 		}
 		return nil, err
 	}
 	config := Config{}
-	if err := sm.zk.Index(zookeeper.ConfigPath, &config, index); err != nil {
+	b, err := sm.zk.Index(zookeeper.ConfigPath, index)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(b, &config); err != nil {
 		return nil, err
 	}
 	config.Num++
@@ -240,7 +245,7 @@ func (sm *ShardMaster) applyOp(op *Op) {
 		if len(sm.configs) == 0 {
 			op.QueryResult = &QueryResult{Config: Config{
 				Num:    -1,
-				Groups: map[int][]string{},
+				Groups: map[int]int{},
 			}}
 		} else {
 			index := op.Query.Num
@@ -267,7 +272,11 @@ func (sm *ShardMaster) applyOpZK(op *Op) {
 				config.Groups[k] = v
 			}
 			rebalance(config)
-			if err := sm.zk.Sequence(zookeeper.ConfigPath, config, config.Num); err != nil {
+			b, err := json.Marshal(config)
+			if err != nil {
+				panic(err)
+			}
+			if err := sm.zk.Sequence(zookeeper.ConfigPath, b, config.Num); err != nil {
 				panic(err)
 			}
 		}
@@ -281,7 +290,11 @@ func (sm *ShardMaster) applyOpZK(op *Op) {
 				delete(config.Groups, k)
 			}
 			rebalance(config)
-			if err := sm.zk.Sequence(zookeeper.ConfigPath, config, config.Num); err != nil {
+			b, err := json.Marshal(config)
+			if err != nil {
+				panic(err)
+			}
+			if err := sm.zk.Sequence(zookeeper.ConfigPath, b, config.Num); err != nil {
 				panic(err)
 			}
 		}
@@ -298,7 +311,7 @@ func (sm *ShardMaster) applyOpZK(op *Op) {
 		index := op.Query.Num
 		last, err := sm.zk.Last(zookeeper.ConfigPath)
 		if err == zookeeper.ErrNoChildren || err == zookeeper.ErrNodeNotExist {
-			op.QueryResult = &QueryResult{Config: Config{Num: -1, Groups: map[int][]string{}}}
+			op.QueryResult = &QueryResult{Config: Config{Num: -1, Groups: map[int]int{}}}
 		} else if err != nil {
 			panic(err)
 		} else {
@@ -306,7 +319,11 @@ func (sm *ShardMaster) applyOpZK(op *Op) {
 				index = last
 			}
 			config := Config{}
-			if err := sm.zk.Index(zookeeper.ConfigPath, &config, index); err != nil {
+			b, err := sm.zk.Index(zookeeper.ConfigPath, index)
+			if err != nil {
+				panic(err)
+			}
+			if err := json.Unmarshal(b, &config); err != nil {
 				panic(err)
 			}
 			op.QueryResult = &QueryResult{Config: config}
@@ -326,7 +343,7 @@ func (sm *ShardMaster) start(op Op) *Op {
 }
 
 func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) error {
-	servers := make(map[int][]string)
+	servers := make(map[int]int)
 	for k, v := range args.Servers {
 		servers[k] = v
 	}

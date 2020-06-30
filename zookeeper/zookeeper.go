@@ -1,7 +1,7 @@
 package zookeeper
 
 import (
-	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -11,16 +11,18 @@ import (
 )
 
 type Controller interface {
-	Sequence(string, interface{}, int) error
-	Index(string, interface{}, int) error
+	Sequence(string, []byte, int) error
+	Index(string, int) ([]byte, error)
 	Last(string) (int, error)
 	First(string) (int, error)
 	In(string, int) (bool, error)
 	Add(string, int) error
 	Delete(string, int) error
 	ElectLeader(string, chan<- error)
-	SetData(string, interface{}) error
-	Data(string, interface{}) error
+	SetData(string, []byte) error
+	Data(string) ([]byte, error)
+	Register(string, int, int, string, func() error) error
+	Find(string, int, int) (string, error)
 }
 
 type cli struct {
@@ -56,16 +58,12 @@ func (c *cli) CreateIfNotExist(path string) error {
 	return nil
 }
 
-func (c *cli) Sequence(path string, data interface{}, index int) error {
+func (c *cli) Sequence(path string, data []byte, index int) error {
 	if err := c.CreateIfNotExist(path); err != nil {
 		return err
 	}
-	b, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
 	path = path + "/guid_"
-	result, err := c.conn.Create(path, b, zk.FlagSequence, defaultACL)
+	result, err := c.conn.Create(path, data, zk.FlagSequence, defaultACL)
 	if err != nil {
 		return err
 	}
@@ -88,18 +86,21 @@ func (c *cli) Sequence(path string, data interface{}, index int) error {
 	return nil
 }
 
-func (c *cli) Index(path string, data interface{}, index int) error {
+func (c *cli) Index(path string, index int) ([]byte, error) {
 	path = path + "/guid_" + fmt.Sprintf("%010d", index)
-	return c.Data(path, data)
+	return c.Data(path)
 }
 
 var ErrNoChildren = fmt.Errorf("no children")
-var ErrNodeNotExist = zk.ErrNoNode
-var ErrNodeExist = zk.ErrNodeExists
+var ErrNodeNotExist = fmt.Errorf("node not exist")
+var ErrNodeExist = fmt.Errorf("node exist")
 
 func (c *cli) Last(path string) (int, error) {
 	children, _, err := c.conn.Children(path)
 	if err != nil {
+		if errors.Is(err, zk.ErrNoNode) {
+			return -1, ErrNodeNotExist
+		}
 		return -1, err
 	}
 	if len(children) == 0 {
@@ -116,6 +117,9 @@ func (c *cli) Last(path string) (int, error) {
 func (c *cli) First(path string) (int, error) {
 	children, _, err := c.conn.Children(path)
 	if err != nil {
+		if errors.Is(err, zk.ErrNoNode) {
+			return -1, ErrNodeNotExist
+		}
 		return -1, err
 	}
 	if len(children) == 0 {
@@ -136,12 +140,15 @@ func (c *cli) In(path string, item int) (bool, error) {
 }
 
 func (c *cli) Add(path string, item int) error {
-	if err := c.CreateIfNotExist(path); err != nil {
+	if err := c.CreateIfNotExist(path); err != nil && !errors.Is(err, zk.ErrNodeExists) {
 		return err
 	}
 	path = path + "/" + strconv.Itoa(item)
 	_, err := c.conn.Create(path, nil, 0, defaultACL)
-	return err
+	if errors.Is(err, zk.ErrNodeExists) {
+		return ErrNodeExist
+	}
+	return nil
 }
 
 func (c *cli) Delete(path string, item int) error {
@@ -159,10 +166,13 @@ func (c *cli) Delete(path string, item int) error {
 func (c *cli) Prev(path string, node string) (string, error) {
 	children, _, err := c.conn.Children(path)
 	if err != nil {
+		if errors.Is(err, zk.ErrNoNode) {
+			return "", ErrNodeNotExist
+		}
 		return "", err
 	}
 	if len(children) == 0 {
-		return "", nil
+		return "", ErrNoChildren
 	}
 	prev := ""
 	for _, c := range children {
@@ -176,7 +186,7 @@ func (c *cli) Prev(path string, node string) (string, error) {
 }
 
 func (c *cli) ElectLeader(path string, elected chan<- error) {
-	if err := c.CreateIfNotExist(path); err != nil {
+	if err := c.CreateIfNotExist(path); err != nil && !errors.Is(err, zk.ErrNodeExists) {
 		elected <- err
 		return
 	}
@@ -226,12 +236,8 @@ func (c *cli) ElectLeader(path string, elected chan<- error) {
 	}
 }
 
-func (c *cli) SetData(path string, data interface{}) error {
-	if err := c.CreateIfNotExist(path); err != nil {
-		return err
-	}
-	b, err := json.Marshal(data)
-	if err != nil {
+func (c *cli) SetData(path string, data []byte) error {
+	if err := c.CreateIfNotExist(path); err != nil && !errors.Is(err, zk.ErrNodeExists) {
 		return err
 	}
 	exist, stat, err := c.conn.Exists(path)
@@ -241,24 +247,68 @@ func (c *cli) SetData(path string, data interface{}) error {
 	if !exist {
 		return ErrNodeNotExist
 	}
-	_, err = c.conn.Set(path, b, stat.Version)
+	_, err = c.conn.Set(path, data, stat.Version)
 	return err
 }
 
-func (c *cli) Data(path string, data interface{}) error {
+func (c *cli) Data(path string) ([]byte, error) {
+	exist, _, err := c.conn.Exists(path)
+	if err != nil {
+		return nil, err
+	}
+	if !exist {
+		return nil, ErrNodeNotExist
+	}
+	b, _, err := c.conn.Get(path)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+func (c *cli) Register(path string, gid int, id int, addr string, initHook func() error) error {
+	if err := c.CreateIfNotExist(path); err != nil && !errors.Is(err, zk.ErrNodeExists) {
+		return fmt.Errorf("path: %v, err: %w", path, err)
+	}
+	shouldInit := false
+	path = path + "/" + strconv.Itoa(gid)
 	exist, _, err := c.conn.Exists(path)
 	if err != nil {
 		return err
 	}
 	if !exist {
-		return ErrNodeNotExist
+		_, err = c.conn.Create(path, nil, 0, defaultACL)
+		if err != nil && !errors.Is(err, zk.ErrNodeExists) {
+			return fmt.Errorf("path: %v, err: %w", path, err)
+		}
+		if err == nil {
+			shouldInit = true
+		}
 	}
-	b, _, err := c.conn.Get(path)
+	// NOTE: maybe race
+
+	children, _, err := c.conn.Children(path)
+	if len(children) == 0 {
+		shouldInit = true
+	}
+
+	path = path + "/" + strconv.Itoa(id)
+	_, err = c.conn.Create(path, []byte(addr), zk.FlagEphemeral, defaultACL)
 	if err != nil {
-		return err
+		return fmt.Errorf("path: %v, err: %w", path, err)
 	}
-	if err := json.Unmarshal(b, data); err != nil {
-		return err
+
+	if shouldInit && initHook != nil {
+		return initHook()
 	}
 	return nil
+}
+
+func (c *cli) Find(path string, gid int, id int) (string, error) {
+	path = path + "/" + strconv.Itoa(gid) + "/" + strconv.Itoa(id)
+	b, err := c.Data(path)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }

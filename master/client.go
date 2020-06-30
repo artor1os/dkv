@@ -51,7 +51,7 @@ func (c *Client) Query(num int) Config {
 	}
 }
 
-func (c *Client) Join(servers map[int][]string) {
+func (c *Client) Join(servers map[int]int) {
 	args := &JoinArgs{}
 	args.Servers = servers
 	args.RID = c.rid

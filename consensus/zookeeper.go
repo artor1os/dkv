@@ -2,6 +2,7 @@ package consensus
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"sync"
 	"time"
@@ -100,7 +101,11 @@ func (z *ZK) updateSyncedIndex(server int, index int) {
 	i := len(si) - z.isr
 
 	if i >= 0 && len(si) > 0 && si[i] > z.highWaterMark {
-		if err := z.zk.SetData(z.commitIndexPath, si[i]); err != nil {
+		b, err := json.Marshal(si[i])
+		if err != nil {
+			panic(err)
+		}
+		if err := z.zk.SetData(z.commitIndexPath, b); err != nil {
 			panic(err)
 		}
 		z.updateHighWaterMark(si[i])
@@ -228,7 +233,11 @@ func (z *ZK) wait() {
 		case r := <-elected:
 			if r == nil {
 				if in, err := z.zk.In(z.isrPath, z.me); err == nil && in {
-					if err := z.zk.Data(z.commitIndexPath, &z.highWaterMark); err != nil {
+					b, err := z.zk.Data(z.commitIndexPath)
+					if err != nil {
+						panic(err)
+					}
+					if err := json.Unmarshal(b, &z.highWaterMark); err != nil {
 						panic(err)
 					}
 					z.log = z.log[:z.highWaterMark+1]
