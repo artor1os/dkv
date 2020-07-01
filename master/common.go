@@ -4,9 +4,9 @@ package master
 const NShards = 10
 
 type Config struct {
-	Num    int              // config number
-	Shards [NShards]int     // shard -> gid
-	Groups map[int]int // gid -> peers
+	Num    int          // config number
+	Shards [NShards]int // shard -> gid
+	Groups map[int]int  // gid -> peers
 }
 
 const (

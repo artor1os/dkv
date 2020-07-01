@@ -54,7 +54,7 @@ type ShardKV struct {
 	me           int
 	cons         consensus.Consensus
 	applyCh      chan consensus.ApplyMsg
-	makeEnds      func(zookeeper.Controller, int, int) []rpc.Endpoint
+	makeEnds     func(zookeeper.Controller, int, int) []rpc.Endpoint
 	gid          int
 	masters      []rpc.Endpoint
 	maxRaftState int // snapshot if log grows this big
@@ -68,7 +68,7 @@ type ShardKV struct {
 
 	sm     *shardManager
 	logger *log.Entry
-	zk zookeeper.Controller
+	zk     zookeeper.Controller
 }
 
 type shardManager struct {
@@ -81,7 +81,7 @@ type shardManager struct {
 }
 
 type groupInfo struct {
-	GID int
+	GID   int
 	Peers int
 }
 
@@ -139,7 +139,7 @@ const pollInterval = time.Millisecond * 100
 func (kv *ShardKV) pollConfig() {
 	ticker := time.NewTicker(pollInterval)
 	for range ticker.C {
-		// No lock is needed here, data race is acceptable
+		// No lock is needed here, data1 race is acceptable
 		config := kv.mc.Query(kv.sm.ConfigNum + 1)
 		if !kv.sm.Waiting() && config.Num > kv.sm.ConfigNum {
 			kv.cons.Start(Op{Type: ConfigOp, Config: &ConfigInfo{Config: &config}})

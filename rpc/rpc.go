@@ -17,9 +17,9 @@ type endpoint struct {
 	addr string
 
 	path string
-	gid int
-	me int
-	zk zookeeper.Controller
+	gid  int
+	me   int
+	zk   zookeeper.Controller
 }
 
 const retry = 30

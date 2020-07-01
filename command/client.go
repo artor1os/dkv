@@ -21,8 +21,8 @@ type ClientOptions struct {
 	port    *int
 	ip      *string
 	masters *int
-	zk *string
-	debug *bool
+	zk      *string
+	debug   *bool
 }
 
 func init() {

@@ -32,12 +32,12 @@ func nrand() int64 {
 }
 
 type Client struct {
-	sm      *master.Client
-	config  master.Config
+	sm       *master.Client
+	config   master.Config
 	makeEnds func(zookeeper.Controller, int, int) []rpc.Endpoint
-	zk zookeeper.Controller
-	rid     int
-	cid     int64
+	zk       zookeeper.Controller
+	rid      int
+	cid      int64
 }
 
 func NewClient(masters []rpc.Endpoint, makeEnds func(zookeeper.Controller, int, int) []rpc.Endpoint, zk zookeeper.Controller) *Client {

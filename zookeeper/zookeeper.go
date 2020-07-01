@@ -36,7 +36,7 @@ type cli struct {
 }
 
 func New(addrs []string) (*cli, error) {
-	conn, session, err := zk.Connect(addrs, 2 * time.Second)
+	conn, session, err := zk.Connect(addrs, 2*time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +57,7 @@ func (c *cli) CreateIfNotExist(path string, data []byte, initHooks ...func() err
 	}
 	if !exist {
 		_, err = c.conn.Create(path, data, 0, defaultACL)
-		if err != nil && !errors.Is(err, zk.ErrNodeExists){
+		if err != nil && !errors.Is(err, zk.ErrNodeExists) {
 			return err
 		}
 		if err == nil {

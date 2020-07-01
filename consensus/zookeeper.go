@@ -39,7 +39,7 @@ type ZK struct {
 	electionPath    string
 	isrPath         string
 	commitIndexPath string
-	logger *log.Entry
+	logger          *log.Entry
 }
 
 type SyncArgs struct {

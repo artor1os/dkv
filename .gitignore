@@ -2,3 +2,9 @@
 output
 
 dkv
+
+docker/myzk/conf/zoo.cfg.dynamic.next
+docker/myzk/data1
+docker/myzk/data2
+docker/myzk/data3
+docker/myzk/apache-zookeeper-3.6.1-bin.tar.gz

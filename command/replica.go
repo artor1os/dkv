@@ -27,8 +27,8 @@ type ReplicaOptions struct {
 	dataDir *string
 	zk      *string
 	isr     *int
-	schema *string
-	debug *bool
+	schema  *string
+	debug   *bool
 }
 
 func init() {
@@ -39,7 +39,7 @@ func init() {
 	r.masters = cmdReplica.Flag.Int("masters", 3, "number of masters")
 	r.me = cmdReplica.Flag.Int("me", 0, "my id")
 	r.gid = cmdReplica.Flag.Int("gid", 100, "my group id")
-	r.dataDir = cmdReplica.Flag.String("dataDir", "/var/lib/dkv", "data directory")
+	r.dataDir = cmdReplica.Flag.String("dataDir", "/var/lib/dkv", "data1 directory")
 	r.zk = cmdReplica.Flag.String("zk", "", "zk servers")
 	r.isr = cmdReplica.Flag.Int("isr", 2, "minimum in-sync replica to agree")
 	r.schema = cmdReplica.Flag.String("schema", "raft", "replica schema, raft or zk")

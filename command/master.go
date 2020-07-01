@@ -23,8 +23,8 @@ type MasterOptions struct {
 	me      *int
 	dataDir *string
 	zk      *string
-	schema *string
-	debug *bool
+	schema  *string
+	debug   *bool
 }
 
 func init() {
@@ -33,7 +33,7 @@ func init() {
 	m.ip = cmdMaster.Flag.String("ip", util.DetectedHostAddress(), "master <ip>|<server> address")
 	m.peers = cmdMaster.Flag.Int("peers", 3, "number of peers")
 	m.me = cmdMaster.Flag.Int("me", 0, "my id")
-	m.dataDir = cmdMaster.Flag.String("dataDir", "/var/lib/dkv", "data directory")
+	m.dataDir = cmdMaster.Flag.String("dataDir", "/var/lib/dkv", "data1 directory")
 	m.zk = cmdMaster.Flag.String("zk", "", "zk servers")
 	m.schema = cmdMaster.Flag.String("schema", "raft", "raft or zk")
 	m.debug = cmdMaster.Flag.Bool("debug", true, "debug log")
@@ -63,7 +63,7 @@ func startMaster(options MasterOptions) {
 		eps := rpc.MakeEndpoints(zk, zookeeper.MasterPath, 0, *options.peers)
 		master.NewServer(eps, *options.me, persist.New(*options.dataDir))
 	} else {
-		master.NewServerWithZK(zk)
+		master.NewServerZK(zk)
 	}
 	addr := net.JoinHostPort(*options.ip, strconv.Itoa(*options.port))
 	if err := rpc.Start(addr); err != nil {

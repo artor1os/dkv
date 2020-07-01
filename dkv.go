@@ -73,7 +73,7 @@ var helpTemplate = `{{if .Runnable}}Usage: dkv {{.UsageLine}}
   {{.Long}}
 `
 
-// tmpl executes the given template text on data, writing the result to w.
+// tmpl executes the given template text on data1, writing the result to w.
 func tmpl(w io.Writer, text string, data interface{}) {
 	t := template.New("top")
 	t.Funcs(template.FuncMap{"trim": strings.TrimSpace, "capitalize": capitalize})

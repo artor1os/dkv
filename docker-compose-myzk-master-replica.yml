@@ -2,26 +2,28 @@ version: '3'
 
 services:
   zk1:
-    image: zookeeper
+    image: myzk
     restart: always
     hostname: zk1
-    environment:
-      ZOO_MY_ID: 1
-      ZOO_SERVERS: server.1=0.0.0.0:2888:3888;2181 server.2=zk2:2888:3888;2181 server.3=zk3:2888:3888;2181
+    build:
+      ./docker/myzk
+    volumes:
+      - "./docker/myzk/conf:/zookeeper/conf"
+      - "./docker/myzk/data1:/data"
   zk2:
-    image: zookeeper
+    image: myzk
     restart: always
     hostname: zk2
-    environment:
-      ZOO_MY_ID: 2
-      ZOO_SERVERS: server.1=zk1:2888:3888;2181 server.2=0.0.0.0:2888:3888;2181 server.3=zk3:2888:3888;2181
+    volumes:
+      - "./docker/myzk/conf:/zookeeper/conf"
+      - "./docker/myzk/data2:/data"
   zk3:
-    image: zookeeper
+    image: myzk
     restart: always
     hostname: zk3
-    environment:
-      ZOO_MY_ID: 3
-      ZOO_SERVERS: server.1=zk1:2888:3888;2181 server.2=zk2:2888:3888;2181 server.3=0.0.0.0:2888:3888;2181
+    volumes:
+      - "./docker/myzk/conf:/zookeeper/conf"
+      - "./docker/myzk/data3:/data"
   master:
     image: dkv
     command: "master -port=8111 -zk='zk1:2181,zk2:2181,zk3:2181' -schema='zk'"

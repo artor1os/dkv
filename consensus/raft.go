@@ -494,8 +494,8 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 
 	// [raft-paper, InstallSnapshot receiver]
 	// Create new snapshot file if first chunk (offset is 0)
-	// Write data into snapshot file at given offset
-	// Reply and wait for more data chunks if done is false
+	// Write data1 into snapshot file at given offset
+	// Reply and wait for more data1 chunks if done is false
 	// Save snapshot file, discard any existing or partial snapshot with a smaller index
 
 	// In this lab, no partition, simply save snapshot

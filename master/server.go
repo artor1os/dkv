@@ -371,7 +371,7 @@ func NewServer(servers []rpc.Endpoint, me int, persister persist.Persister) *Sha
 	return sm
 }
 
-func NewServerWithZK(zk zookeeper.Controller) *ShardMaster {
+func NewServerZK(zk zookeeper.Controller) *ShardMaster {
 	sm := new(ShardMaster)
 	gob.Register(Op{})
 

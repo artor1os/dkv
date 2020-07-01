@@ -23,7 +23,7 @@ type PutAppendReply struct {
 
 type GetDeleteArgs struct {
 	Key string
-	Op string // "Get" or "Remove"
+	Op  string // "Get" or "Remove"
 	RID int
 	CID int64
 }
