@@ -10,6 +10,7 @@ import (
 	"github.com/artor1os/dkv/zookeeper"
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -21,6 +22,7 @@ type ClientOptions struct {
 	ip      *string
 	masters *int
 	zk *string
+	debug *bool
 }
 
 func init() {
@@ -29,6 +31,7 @@ func init() {
 	c.ip = cmdClient.Flag.String("ip", util.DetectedHostAddress(), "client <ip>|<server> address")
 	c.masters = cmdClient.Flag.Int("masters", 3, "number of masters")
 	c.zk = cmdClient.Flag.String("zk", "", "zookeeper servers")
+	c.debug = cmdClient.Flag.Bool("debug", true, "debug log")
 }
 
 var cmdClient = &Command{
@@ -45,6 +48,11 @@ type joinArg map[int]int
 type leaveArg []int
 
 func startClient(options ClientOptions) {
+	if *options.debug {
+		log.SetLevel(log.DebugLevel)
+	} else {
+		log.SetLevel(log.InfoLevel)
+	}
 	zk, err := zookeeper.New(util.ParsePeers(*options.zk))
 	if err != nil {
 		panic(err)

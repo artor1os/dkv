@@ -28,6 +28,7 @@ type ReplicaOptions struct {
 	zk      *string
 	isr     *int
 	schema *string
+	debug *bool
 }
 
 func init() {
@@ -42,6 +43,7 @@ func init() {
 	r.zk = cmdReplica.Flag.String("zk", "", "zk servers")
 	r.isr = cmdReplica.Flag.Int("isr", 2, "minimum in-sync replica to agree")
 	r.schema = cmdReplica.Flag.String("schema", "raft", "replica schema, raft or zk")
+	r.debug = cmdReplica.Flag.Bool("debug", true, "debug log")
 }
 
 var cmdReplica = &Command{
@@ -55,6 +57,12 @@ func runReplica(cmd *Command, args []string) bool {
 }
 
 func startReplica(options ReplicaOptions) {
+	if *options.debug {
+		log.SetLevel(log.DebugLevel)
+	} else {
+		log.SetLevel(log.InfoLevel)
+	}
+
 	zk, err := zookeeper.New(util.ParsePeers(*options.zk))
 	if err != nil {
 		panic(err)

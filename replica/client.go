@@ -2,21 +2,26 @@ package replica
 
 import (
 	"crypto/rand"
+	"hash/fnv"
 	"math/big"
 	"time"
 
 	"github.com/artor1os/dkv/master"
 	"github.com/artor1os/dkv/rpc"
 	"github.com/artor1os/dkv/zookeeper"
+	log "github.com/sirupsen/logrus"
 )
 
+func hash(s string) uint32 {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(s))
+	return h.Sum32()
+}
+
 func key2shard(key string) int {
-	shard := 0
-	if len(key) > 0 {
-		shard = int(key[0]) // TODO: use hash
-	}
+	shard := hash(key)
 	shard %= master.NShards
-	return shard
+	return int(shard)
 }
 
 func nrand() int64 {
@@ -55,6 +60,10 @@ func (c *Client) GetDelete(key string, op string) string {
 	for {
 		shard := key2shard(key)
 		gid := c.config.Shards[shard]
+		log.WithField("shard", shard).
+			WithField("gid", gid).
+			WithField("op", op).
+			Debug("accept GetDelete request")
 		if peers, ok := c.config.Groups[gid]; ok {
 			// try each server for the shard.
 			servers := c.makeEnds(c.zk, gid, peers)
@@ -97,12 +106,17 @@ func (c *Client) PutAppend(key string, value string, op string) {
 	for {
 		shard := key2shard(key)
 		gid := c.config.Shards[shard]
+		log.WithField("shard", shard).
+			WithField("gid", gid).
+			WithField("op", op).
+			Debug("accept PutAppend request")
 		if peers, ok := c.config.Groups[gid]; ok {
 			servers := c.makeEnds(c.zk, gid, peers)
 			for si := 0; si < len(servers); si++ {
 				srv := servers[si]
 				var reply PutAppendReply
 				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
+				log.WithField("ok", ok).WithField("err", reply.Err).Info("PutAppend RPC complete")
 				if ok && reply.Err == OK {
 					return
 				}

@@ -24,6 +24,7 @@ type MasterOptions struct {
 	dataDir *string
 	zk      *string
 	schema *string
+	debug *bool
 }
 
 func init() {
@@ -35,6 +36,7 @@ func init() {
 	m.dataDir = cmdMaster.Flag.String("dataDir", "/var/lib/dkv", "data directory")
 	m.zk = cmdMaster.Flag.String("zk", "", "zk servers")
 	m.schema = cmdMaster.Flag.String("schema", "raft", "raft or zk")
+	m.debug = cmdMaster.Flag.Bool("debug", true, "debug log")
 }
 
 var cmdMaster = &Command{
@@ -48,6 +50,11 @@ func runMaster(cmd *Command, args []string) bool {
 }
 
 func startMaster(options MasterOptions) {
+	if *options.debug {
+		log.SetLevel(log.DebugLevel)
+	} else {
+		log.SetLevel(log.InfoLevel)
+	}
 	zk, err := zookeeper.New(util.ParsePeers(*options.zk))
 	if err != nil {
 		panic(err)

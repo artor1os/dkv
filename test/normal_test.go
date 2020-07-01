@@ -21,9 +21,6 @@ func check(t *testing.T, expected string, actual string) {
 }
 
 func Test1(t *testing.T) {
-	if err := util.Post(joinURL, map[int]int{100: 3, 101: 3}, nil); err != nil {
-		t.Fatal(err)
-	}
 	key := "1"
 	value := "adsds"
 	if err := util.Get(putURL, map[string]string{"key": key, "value": value}, nil); err != nil {
@@ -53,4 +50,7 @@ func Test1(t *testing.T) {
 		t.Fatal(err)
 	}
 	check(t, value, actual)
+	if err := util.Post(joinURL, map[int]int{101: 3}, nil); err != nil {
+		t.Fatal(err)
+	}
 }

@@ -70,19 +70,19 @@ func (z *ZK) Sync(args *SyncArgs, reply *SyncReply) (err error) {
 		WithField("lastLogIndex", args.LastLogIndex)
 
 	if args.LastLogIndex == z.lastLogIndex() {
-		logger.Info("lastLogIndex equals leader's, add to ISR")
+		logger.Debug("lastLogIndex equals leader's, add to ISR")
 		z.addISR(args.ID)
 	}
 
 	if args.LastLogIndex == z.lastFetchedIndex[args.ID] {
 		reply.LastRetain = args.LastLogIndex
 		logger.WithField("lastRetain", reply.LastRetain).
-			Info("lastLogIndex equals lastFetchedIndex, update syncedIndex")
+			Debug("lastLogIndex equals lastFetchedIndex, update syncedIndex")
 		z.updateSyncedIndex(args.ID, args.LastLogIndex)
 	} else {
 		reply.LastRetain = args.HighWaterMark
 		logger.WithField("lastRetain", reply.LastRetain).
-			Info("not expected lastLogIndex, retain only before highWaterMark")
+			Debug("not expected lastLogIndex, retain only before highWaterMark")
 	}
 
 	reply.Log = z.log[reply.LastRetain+1:]
@@ -103,13 +103,13 @@ func (z *ZK) updateSyncedIndex(server int, index int) {
 	}
 
 	sort.Ints(si)
-	z.logger.WithField("si", si).Info("synced index in ISR")
+	z.logger.WithField("si", si).Debug("synced index in ISR")
 
 	// NOTE: correct?
 	i := len(si) - z.isr
 
 	z.logger.WithField("i", i).WithField("isr", z.isr).
-		Info("ith synced index has been agreed by at least isrNum replica")
+		Debug("ith synced index has been agreed by at least isrNum replica")
 
 	if i >= 0 && len(si) > 0 && si[i] > z.highWaterMark {
 		z.logger.WithField("i", i).WithField("si[i]", si[i]).Info("leader update highWaterMark")
@@ -159,7 +159,7 @@ func (z *ZK) sync() {
 			WithField("log", reply.Log).
 			WithField("lastRetain", reply.LastRetain).
 			WithField("leaderHighWaterMark", reply.LeaderHighWaterMark).
-			Info("successfully sync with leader")
+			Debug("successfully sync with leader")
 		z.log = append(z.log[:reply.LastRetain+1], reply.Log...)
 		z.updateHighWaterMark(reply.LeaderHighWaterMark)
 	}
@@ -179,6 +179,7 @@ func (z *ZK) apply() {
 		msg.CommandIndex = z.lastApplied
 		msg.Command = z.log[z.lastApplied]
 		z.applyCh <- msg
+		z.logger.WithField("command", msg.Command).WithField("index", msg.CommandIndex).Info("msg applied")
 		z.mu.Unlock()
 	}
 }
