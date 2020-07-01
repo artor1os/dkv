@@ -21,13 +21,14 @@ type PutAppendReply struct {
 	Err Err
 }
 
-type GetArgs struct {
+type GetDeleteArgs struct {
 	Key string
+	Op string // "Get" or "Delete"
 	RID int
 	CID int64
 }
 
-type GetReply struct {
+type GetDeleteReply struct {
 	Err   Err
 	Value string
 }

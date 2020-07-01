@@ -31,6 +31,7 @@ type Op struct {
 
 const (
 	GetOp     = "Get"
+	DeleteOp  = "Delete"
 	PutOp     = "Put"
 	AppendOp  = "Append"
 	MigrateOp = "Migrate"
@@ -358,6 +359,16 @@ func (kv *ShardKV) applyOp(op *Op) {
 		} else {
 			op.Value = v
 		}
+	case DeleteOp:
+		v, ok := kv.store[op.Key]
+		if !ok {
+			op.Err = ErrNoKey
+		} else {
+			op.Value = v
+		}
+		if !kv.isDup(op) {
+			delete(kv.store, op.Key)
+		}
 	}
 	if !kv.isDup(op) {
 		kv.commit(op)
@@ -384,7 +395,7 @@ func (kv *ShardKV) waitIndexCommit(index int, cid int64, rid int) *Op {
 	}
 }
 
-func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) error {
+func (kv *ShardKV) GetDelete(args *GetDeleteArgs, reply *GetDeleteReply) error {
 	kv.mu.Lock()
 	if !kv.shouldServe(args.Key) {
 		reply.Err = ErrWrongGroup
@@ -392,9 +403,9 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) error {
 		return nil
 	}
 	kv.mu.Unlock()
-	logger := kv.logger.WithField("key", args.Key)
-	logger.Info("try get")
-	newOp := Op{Type: GetOp, RID: args.RID, CID: args.CID, Key: args.Key}
+	logger := kv.logger.WithField("key", args.Key).WithField("op", args.Op)
+	logger.Info("try get or delete")
+	newOp := Op{Type: args.Op, RID: args.RID, CID: args.CID, Key: args.Key}
 	index, isLeader := kv.cons.Start(newOp)
 	if !isLeader {
 		logger.Info("not leader")

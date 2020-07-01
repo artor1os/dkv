@@ -44,12 +44,13 @@ func NewClient(masters []rpc.Endpoint, makeEnds func(zookeeper.Controller, int, 
 	return c
 }
 
-func (c *Client) Get(key string) string {
-	args := GetArgs{}
+func (c *Client) GetDelete(key string, op string) string {
+	args := GetDeleteArgs{}
 	args.CID = c.cid
 	args.RID = c.rid
 	c.rid++
 	args.Key = key
+	args.Op = op
 
 	for {
 		shard := key2shard(key)
@@ -59,8 +60,8 @@ func (c *Client) Get(key string) string {
 			servers := c.makeEnds(c.zk, gid, peers)
 			for si := 0; si < len(servers); si++ {
 				srv := servers[si]
-				var reply GetReply
-				ok := srv.Call("ShardKV.Get", &args, &reply)
+				var reply GetDeleteReply
+				ok := srv.Call("ShardKV.GetDelete", &args, &reply)
 				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
 					return reply.Value
 				}
@@ -74,6 +75,14 @@ func (c *Client) Get(key string) string {
 		// ask master for the latest configuration.
 		c.config = c.sm.Query(-1)
 	}
+}
+
+func (c *Client) Get(key string) string {
+	return c.GetDelete(key, "Get")
+}
+
+func (c *Client) Delete(key string) string {
+	return c.GetDelete(key, "Delete")
 }
 
 func (c *Client) PutAppend(key string, value string, op string) {

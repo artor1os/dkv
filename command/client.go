@@ -59,6 +59,12 @@ func startClient(options ClientOptions) {
 		c.JSON(200, value)
 	})
 
+	r.GET("/delete", func(c *gin.Context) {
+		key := c.Query("key")
+		value := cli.Delete(key)
+		c.JSON(200, value)
+	})
+
 	r.GET("/put", func(c *gin.Context) {
 		key := c.Query("key")
 		value := c.Query("value")
