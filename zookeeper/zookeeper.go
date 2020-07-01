@@ -3,6 +3,7 @@ package zookeeper
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -35,7 +36,7 @@ type cli struct {
 }
 
 func New(addrs []string) (*cli, error) {
-	conn, session, err := zk.Connect(addrs, time.Second)
+	conn, session, err := zk.Connect(addrs, 2 * time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -118,6 +119,7 @@ func (c *cli) Last(path string) (int, error) {
 	if len(children) == 0 {
 		return -1, ErrNoChildren
 	}
+	sort.Strings(children)
 	last := children[len(children)-1]
 	i, err := strconv.Atoi(strings.TrimPrefix(last, "guid_"))
 	if err != nil {

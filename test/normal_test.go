@@ -1,6 +1,7 @@
 package test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/artor1os/dkv/util"
@@ -17,6 +18,12 @@ const appendURL = host + "/append"
 func check(t *testing.T, expected string, actual string) {
 	if actual != expected {
 		t.Fatalf("expected: %v, actual: %v", expected, actual)
+	}
+}
+
+func TestMulti(t *testing.T) {
+	for i := 0; i < 10; i++ {
+		t.Run(fmt.Sprintf("%v", i), Test1)
 	}
 }
 
