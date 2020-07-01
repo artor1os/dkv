@@ -70,6 +70,7 @@ func startReplica(options ReplicaOptions) {
 	if err := rpc.Start(addr); err != nil {
 		panic(err)
 	}
+	logger := log.WithField("gid", *options.gid).WithField("me", *options.me)
 	initJoin := func() error {
 		m := master.NewClient(masters)
 		m.Join(map[int]int{*options.gid: *options.peers})
@@ -78,45 +79,72 @@ func startReplica(options ReplicaOptions) {
 	initZK := func() error {
 		if *options.schema == "zk" {
 			util.WaitSuccess(func() error {
-				return zk.CreateIfNotExist(zookeeper.ISRPath)
-			}, nil, nil)
+				return zk.CreateIfNotExist(zookeeper.ISRPath, nil)
+			}, func(err error) {
+				logger.WithError(err).Info("failed to create ISR root")
+			}, func() {
+				logger.Info("successfully create ISR root")
+			})
 			util.WaitSuccess(func() error {
-				return zk.CreateIfNotExist(zookeeper.CommitIndexPath)
-			}, nil, nil)
+				return zk.CreateIfNotExist(zookeeper.CommitIndexPath, nil)
+			}, func(err error) {
+				logger.WithError(err).Info("failed to create commit root")
+			}, func() {
+				logger.Info("successfully create commit root")
+			})
+			util.WaitSuccess(func() error {
+				return zk.CreateIfNotExist(zookeeper.ElectionPath, nil)
+			}, func(err error) {
+				logger.WithError(err).Info("failed to create election root")
+			}, func() {
+				logger.Info("successfully create election root")
+			})
 			isrPath := zookeeper.MakeGroupPath(zookeeper.ISRPath, *options.gid)
 			commitPath := zookeeper.MakeGroupPath(zookeeper.CommitIndexPath, *options.gid)
+			electionPath := zookeeper.MakeGroupPath(zookeeper.ElectionPath, *options.gid)
 			util.WaitSuccess(func() error {
-				return zk.CreateIfNotExist(isrPath, func() error {
-					for p := 0; p < *options.peers; p++ {
+				return zk.CreateIfNotExist(isrPath, nil, func() error {
+					for i := 0; i < *options.peers; i++ {
+						p := i
 						go util.WaitSuccess(func() error {
 							return zk.Add(isrPath, p)
-						}, nil, nil)
+						}, func(err error) {
+							logger.WithError(err).WithField("peer", p).Info("failed to add isr")
+						}, func() {
+							logger.WithField("peer", p).Info("successfully add isr")
+						})
 					}
 					return nil
 				})
-			}, nil, nil)
+			}, func(err error) {
+				logger.WithError(err).Info("failed to create ISR path")
+			}, func() {
+				logger.Info("successfully create ISR path")
+			})
 			util.WaitSuccess(func() error {
-				return zk.CreateIfNotExist(commitPath, func() error {
-					util.WaitSuccess(func() error {
-						return zk.SetData(commitPath, []byte(strconv.Itoa(0)))
-					}, nil, nil)
-					return nil
-				})
-			}, nil, nil)
+				return zk.CreateIfNotExist(commitPath, []byte(strconv.Itoa(0)))
+			}, func(err error) {
+				logger.WithError(err).Info("failed to create commit path")
+			}, func() {
+				logger.Info("successfully create commit path")
+			})
+			util.WaitSuccess(func() error {
+				return zk.CreateIfNotExist(electionPath, nil)
+			}, func(err error) {
+				logger.WithError(err).Info("failed to create election path")
+			}, func() {
+				logger.Info("successfully create election path")
+			})
 		}
 		return nil
 	}
 	util.WaitSuccess(func() error {
 		return zk.Register(zookeeper.GroupPath, *options.gid, *options.me, addr, initJoin, initZK)
-	}, func() {
-		log.WithError(err).
-			WithField("gid", *options.gid).
-			WithField("me", *options.me).
+	}, func(err error) {
+		logger.WithError(err).
 			Info("failed to register replica")
 	}, func() {
-		log.WithField("gid", *options.gid).
-			WithField("me", *options.me).
-			Info("successfully registered replica")
+		logger.Info("successfully registered replica")
 	})
 	select {}
 }

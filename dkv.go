@@ -97,7 +97,6 @@ func printUsage(w io.Writer) {
 
 func usage() {
 	printUsage(os.Stderr)
-	fmt.Fprintf(os.Stderr, "For Logging, use \"weed [logging_options] [command]\". The logging options are:\n")
 	flag.PrintDefaults()
 	os.Exit(2)
 }
@@ -109,7 +108,7 @@ func help(args []string) {
 		return
 	}
 	if len(args) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: weed help command\n\nToo many arguments given.\n")
+		fmt.Fprintf(os.Stderr, "usage: dkv help command\n\nToo many arguments given.\n")
 		os.Exit(2)
 	}
 

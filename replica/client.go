@@ -82,7 +82,7 @@ func (c *Client) Get(key string) string {
 }
 
 func (c *Client) Delete(key string) string {
-	return c.GetDelete(key, "Delete")
+	return c.GetDelete(key, "Remove")
 }
 
 func (c *Client) PutAppend(key string, value string, op string) {

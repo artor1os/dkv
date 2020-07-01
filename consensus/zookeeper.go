@@ -2,8 +2,8 @@ package consensus
 
 import (
 	"context"
-	"encoding/json"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -11,6 +11,7 @@ import (
 	"github.com/artor1os/dkv/rpc"
 	"github.com/artor1os/dkv/util"
 	"github.com/artor1os/dkv/zookeeper"
+	log "github.com/sirupsen/logrus"
 )
 
 type ZK struct {
@@ -38,6 +39,7 @@ type ZK struct {
 	electionPath    string
 	isrPath         string
 	commitIndexPath string
+	logger *log.Entry
 }
 
 type SyncArgs struct {
@@ -63,28 +65,33 @@ func (z *ZK) Sync(args *SyncArgs, reply *SyncReply) (err error) {
 	if !z.isLeader {
 		return
 	}
+	logger := z.logger.WithField("from", args.ID).
+		WithField("highWaterMark", args.HighWaterMark).
+		WithField("lastLogIndex", args.LastLogIndex)
 
 	if args.LastLogIndex == z.lastLogIndex() {
+		logger.Info("lastLogIndex equals leader's, add to ISR")
 		z.addISR(args.ID)
 	}
 
 	if args.LastLogIndex == z.lastFetchedIndex[args.ID] {
 		reply.LastRetain = args.LastLogIndex
-		go z.updateSyncedIndex(args.ID, args.LastLogIndex)
+		logger.WithField("lastRetain", reply.LastRetain).
+			Info("lastLogIndex equals lastFetchedIndex, update syncedIndex")
+		z.updateSyncedIndex(args.ID, args.LastLogIndex)
 	} else {
 		reply.LastRetain = args.HighWaterMark
+		logger.WithField("lastRetain", reply.LastRetain).
+			Info("not expected lastLogIndex, retain only before highWaterMark")
 	}
 
-	reply.Log = z.log[reply.LastRetain:]
+	reply.Log = z.log[reply.LastRetain+1:]
 	z.lastFetchedIndex[args.ID] = z.lastLogIndex()
 	reply.LeaderHighWaterMark = z.highWaterMark
 	return
 }
 
 func (z *ZK) updateSyncedIndex(server int, index int) {
-	z.mu.Lock()
-	defer z.mu.Unlock()
-
 	if index <= z.SyncedIndex[server] {
 		return
 	}
@@ -96,16 +103,17 @@ func (z *ZK) updateSyncedIndex(server int, index int) {
 	}
 
 	sort.Ints(si)
+	z.logger.WithField("si", si).Info("synced index in ISR")
 
 	// NOTE: correct?
 	i := len(si) - z.isr
 
+	z.logger.WithField("i", i).WithField("isr", z.isr).
+		Info("ith synced index has been agreed by at least isrNum replica")
+
 	if i >= 0 && len(si) > 0 && si[i] > z.highWaterMark {
-		b, err := json.Marshal(si[i])
-		if err != nil {
-			panic(err)
-		}
-		if err := z.zk.SetData(z.commitIndexPath, b); err != nil {
+		z.logger.WithField("i", i).WithField("si[i]", si[i]).Info("leader update highWaterMark")
+		if err := z.zk.SetData(z.commitIndexPath, []byte(strconv.Itoa(si[i]))); err != nil {
 			panic(err)
 		}
 		z.updateHighWaterMark(si[i])
@@ -119,34 +127,43 @@ func (z *ZK) updateHighWaterMark(hw int) {
 
 func (z *ZK) sync() {
 	z.mu.Lock()
-	defer z.mu.Unlock()
 	if z.isLeader {
 		return
 	}
 	args := SyncArgs{}
 	args.ID = z.me
 	args.HighWaterMark = z.highWaterMark
+	args.LastLogIndex = z.lastLogIndex()
 	reply := SyncReply{}
 	z.mu.Unlock()
 
 	leader, err := z.getLeader()
 	if err != nil {
-		// TODO
+		z.logger.WithError(err).Info("failed to get leader")
 		return
 	}
 	if leader == z.me {
+		z.logger.Info("leader is me")
 		return
 	}
 	ok := z.peers[leader].Call("ZK.Sync", &args, &reply)
 
 	z.mu.Lock()
 	if z.isLeader {
+		z.logger.Info("leader is me")
+		z.mu.Unlock()
 		return
 	}
 	if ok {
+		z.logger.
+			WithField("log", reply.Log).
+			WithField("lastRetain", reply.LastRetain).
+			WithField("leaderHighWaterMark", reply.LeaderHighWaterMark).
+			Info("successfully sync with leader")
 		z.log = append(z.log[:reply.LastRetain+1], reply.Log...)
 		z.updateHighWaterMark(reply.LeaderHighWaterMark)
 	}
+	z.mu.Unlock()
 }
 
 func (z *ZK) apply() {
@@ -177,7 +194,7 @@ func (z *ZK) addISR(server int) {
 	z.isrSet.Add(server)
 }
 
-const replicaMaxSyncTimeout = time.Millisecond * 500
+const replicaMaxSyncTimeout = time.Millisecond * 1000
 
 func (z *ZK) isrChecker() {
 	for i := range z.peers {
@@ -203,13 +220,13 @@ func (z *ZK) isrChecker() {
 func (z *ZK) removeFromISR(server int) {
 	z.mu.Lock()
 	defer z.mu.Unlock()
-	if err := z.zk.Delete(z.isrPath, server); err != nil && err != zookeeper.ErrNodeNotExist {
+	if err := z.zk.Remove(z.isrPath, server); err != nil && err != zookeeper.ErrNodeNotExist {
 		panic(err)
 	}
 	z.isrSet.Delete(server)
 }
 
-const followerFetchInterval = time.Millisecond * 300
+const followerFetchInterval = time.Millisecond * 100
 
 func (z *ZK) fetch(ctx context.Context) {
 	ticker := time.NewTicker(followerFetchInterval)
@@ -228,19 +245,38 @@ func (z *ZK) wait() {
 	ctx, cancel := context.WithCancel(context.Background())
 	go z.fetch(ctx)
 	for {
-		z.zk.ElectLeader(z.electionPath, elected)
+		node, err := z.zk.ElectLeader(z.electionPath, z.me, elected)
+		if err != nil {
+			z.logger.WithError(err).Info("failed to elect leader")
+			continue
+		}
+		z.logger.WithField("node", node).Info("try to elect leader")
 		select {
 		case r := <-elected:
 			if r == nil {
 				if in, err := z.zk.In(z.isrPath, z.me); err == nil && in {
+					z.logger.Info("in ISR, and elected")
+
 					b, err := z.zk.Data(z.commitIndexPath)
 					if err != nil {
 						panic(err)
 					}
-					if err := json.Unmarshal(b, &z.highWaterMark); err != nil {
+					hwm, err := strconv.Atoi(string(b))
+					if err != nil {
 						panic(err)
 					}
+					z.highWaterMark = hwm
+					z.logger.WithField("hwm", z.highWaterMark).Info("set highWaterMark")
 					z.log = z.log[:z.highWaterMark+1]
+
+					isr, err := z.zk.All(z.isrPath)
+					if err != nil {
+						panic(err)
+					}
+					for _, r := range isr {
+						z.isrSet.Add(r)
+					}
+
 					z.SyncedIndex[z.me] = z.lastLogIndex()
 					z.isLeader = true
 					cancel()
@@ -248,8 +284,16 @@ func (z *ZK) wait() {
 					return
 				}
 			}
-			// Delete ephemeral node
-			// TODO
+			util.WaitSuccess(func() error {
+				if err := z.zk.Delete(node); err != zookeeper.ErrNodeNotExist {
+					return err
+				}
+				return nil
+			}, func(err error) {
+				z.logger.WithError(err).WithField("node", node).Info("failed to delete election node")
+			}, func() {
+				z.logger.Info("successfully delete election node")
+			})
 		}
 	}
 }
@@ -290,8 +334,13 @@ func NewZK(peers []rpc.Endpoint, me int, persister persist.Persister, applyCh ch
 	zk.isrSet = util.NewSet()
 
 	zk.applyCond = sync.NewCond(&zk.mu)
+	zk.logger = log.WithField("me", zk.me)
 	go zk.apply()
 	go zk.wait()
+
+	if err := rpc.Register(zk); err != nil {
+		panic(err)
+	}
 
 	return zk
 }

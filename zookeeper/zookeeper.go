@@ -13,15 +13,17 @@ import (
 )
 
 type Controller interface {
-	CreateIfNotExist(string, ...func() error) error
+	CreateIfNotExist(string, []byte, ...func() error) error
 	Sequence(string, []byte, int) error
 	Index(string, int) ([]byte, error)
 	Last(string) (int, error)
 	First(string) (int, error)
 	In(string, int) (bool, error)
+	All(string) ([]int, error)
 	Add(string, int) error
-	Delete(string, int) error
-	ElectLeader(string, chan<- error)
+	Remove(string, int) error
+	Delete(string) error
+	ElectLeader(string, int, chan<- error) (string, error)
 	SetData(string, []byte) error
 	Data(string) ([]byte, error)
 	Register(string, int, int, string, ...func() error) error
@@ -47,13 +49,13 @@ func New(addrs []string) (*cli, error) {
 
 var defaultACL = zk.WorldACL(zk.PermAll)
 
-func (c *cli) CreateIfNotExist(path string, initHooks ...func() error) error {
+func (c *cli) CreateIfNotExist(path string, data []byte, initHooks ...func() error) error {
 	exist, _, err := c.conn.Exists(path)
 	if err != nil {
 		return err
 	}
 	if !exist {
-		_, err = c.conn.Create(path, nil, 0, defaultACL)
+		_, err = c.conn.Create(path, data, 0, defaultACL)
 		if err != nil && !errors.Is(err, zk.ErrNodeExists){
 			return err
 		}
@@ -69,7 +71,7 @@ func (c *cli) CreateIfNotExist(path string, initHooks ...func() error) error {
 }
 
 func (c *cli) Sequence(path string, data []byte, index int) error {
-	if err := c.CreateIfNotExist(path); err != nil {
+	if err := c.CreateIfNotExist(path, nil); err != nil {
 		return err
 	}
 	path = path + "/guid_"
@@ -136,11 +138,15 @@ func (c *cli) First(path string) (int, error) {
 		return -1, ErrNoChildren
 	}
 	first := children[0]
-	i, err := strconv.Atoi(strings.TrimPrefix(first, "guid_"))
+	b, err := c.Data(path + "/" + first)
+	if err != nil {
+		return -1, fmt.Errorf("path: %v, err: %w", path+first, err)
+	}
+	id, err := strconv.Atoi(string(b))
 	if err != nil {
 		return -1, err
 	}
-	return i, nil
+	return id, nil
 }
 
 func (c *cli) In(path string, item int) (bool, error) {
@@ -149,8 +155,24 @@ func (c *cli) In(path string, item int) (bool, error) {
 	return exist, err
 }
 
+func (c *cli) All(path string) ([]int, error) {
+	children, _, err := c.conn.Children(path)
+	if err != nil {
+		return nil, err
+	}
+	ret := make([]int, len(children))
+	for i, c := range children {
+		id, err := strconv.Atoi(c)
+		if err != nil {
+			return nil, err
+		}
+		ret[i] = id
+	}
+	return ret, nil
+}
+
 func (c *cli) Add(path string, item int) error {
-	if err := c.CreateIfNotExist(path); err != nil && !errors.Is(err, zk.ErrNodeExists) {
+	if err := c.CreateIfNotExist(path, nil); err != nil && !errors.Is(err, zk.ErrNodeExists) {
 		return err
 	}
 	path = path + "/" + strconv.Itoa(item)
@@ -161,8 +183,12 @@ func (c *cli) Add(path string, item int) error {
 	return nil
 }
 
-func (c *cli) Delete(path string, item int) error {
+func (c *cli) Remove(path string, item int) error {
 	path = path + "/" + strconv.Itoa(item)
+	return c.Delete(path)
+}
+
+func (c *cli) Delete(path string) error {
 	exist, stat, err := c.conn.Exists(path)
 	if err != nil {
 		return err
@@ -195,59 +221,60 @@ func (c *cli) Prev(path string, node string) (string, error) {
 	return prev, nil
 }
 
-func (c *cli) ElectLeader(path string, elected chan<- error) {
-	if err := c.CreateIfNotExist(path); err != nil && !errors.Is(err, zk.ErrNodeExists) {
-		elected <- err
-		return
+func (c *cli) ElectLeader(path string, id int, elected chan<- error) (string, error) {
+	if err := c.CreateIfNotExist(path, nil); err != nil && !errors.Is(err, zk.ErrNodeExists) {
+		return "", err
 	}
 	nodePath := path + "/guid_"
-	me, err := c.conn.CreateProtectedEphemeralSequential(nodePath, nil, defaultACL)
+	me, err := c.conn.CreateProtectedEphemeralSequential(nodePath, []byte(strconv.Itoa(id)), defaultACL)
 	if err != nil {
-		elected <- err
-		return
+		return "", err
 	}
-	for {
-		prev, err := c.Prev(path, me)
-		if err != nil {
-			elected <- err
-			return
-		}
-
-		if prev == "" {
-			elected <- nil
-			return
-		}
-
-		exist, _, events, err := c.conn.ExistsW(prev)
-		if err != nil {
-			elected <- err
-			return
-		}
-		if !exist {
-			continue
-		}
-
+	go func() {
 		for {
-			event := <-events
-			switch event.Type {
-			case zk.EventNodeDeleted:
-				break
-			default:
-				exist, _, events, err = c.conn.ExistsW(prev)
-				if err != nil {
-					elected <- err
-					return
-				}
-				if !exist {
+			prev, err := c.Prev(path, me)
+			if err != nil {
+				elected <- err
+				return
+			}
+
+			if prev == "" {
+				elected <- nil
+				return
+			}
+
+			exist, _, events, err := c.conn.ExistsW(prev)
+			if err != nil {
+				elected <- err
+				return
+			}
+			if !exist {
+				continue
+			}
+
+			for {
+				event := <-events
+				switch event.Type {
+				case zk.EventNodeDeleted:
 					break
+				default:
+					exist, _, events, err = c.conn.ExistsW(prev)
+					if err != nil {
+						elected <- err
+						return
+					}
+					if !exist {
+						break
+					}
 				}
 			}
 		}
-	}
+	}()
+	return me, nil
 }
 
 func (c *cli) SetData(path string, data []byte) error {
-	if err := c.CreateIfNotExist(path); err != nil && !errors.Is(err, zk.ErrNodeExists) {
+	if err := c.CreateIfNotExist(path, nil); err != nil && !errors.Is(err, zk.ErrNodeExists) {
 		return err
 	}
 	exist, stat, err := c.conn.Exists(path)
@@ -277,11 +304,11 @@ func (c *cli) Data(path string) ([]byte, error) {
 }
 
 func (c *cli) Register(path string, gid int, id int, addr string, initHooks ...func() error) error {
-	if err := c.CreateIfNotExist(path); err != nil && !errors.Is(err, zk.ErrNodeExists) {
+	if err := c.CreateIfNotExist(path, nil); err != nil && !errors.Is(err, zk.ErrNodeExists) {
 		return fmt.Errorf("path: %v, err: %w", path, err)
 	}
 	path = path + "/" + strconv.Itoa(gid)
-	if err := c.CreateIfNotExist(path, initHooks...); err != nil {
+	if err := c.CreateIfNotExist(path, nil, initHooks...); err != nil {
 		return err
 	}
 

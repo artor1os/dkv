@@ -22,9 +22,11 @@ type endpoint struct {
 	zk zookeeper.Controller
 }
 
+const retry = 30
+
 func (e *endpoint) Call(method string, args interface{}, reply interface{}) bool {
 	if e.addr == "" {
-		for {
+		for r := retry; r > 0; r-- {
 			addr, err := e.zk.Find(e.path, e.gid, e.me)
 			if err != nil {
 				log.WithError(err).
@@ -37,6 +39,10 @@ func (e *endpoint) Call(method string, args interface{}, reply interface{}) bool
 			e.addr = addr
 			break
 		}
+	}
+	if e.addr == "" {
+		log.WithField("retry", retry).Error("retry time exceeded")
+		return false
 	}
 
 	cli, err := rpc.DialHTTP("tcp", e.addr)

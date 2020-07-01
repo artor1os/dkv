@@ -31,7 +31,7 @@ type Op struct {
 
 const (
 	GetOp     = "Get"
-	DeleteOp  = "Delete"
+	DeleteOp  = "Remove"
 	PutOp     = "Put"
 	AppendOp  = "Append"
 	MigrateOp = "Migrate"

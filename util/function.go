@@ -1,10 +1,10 @@
 package util
 
-func WaitSuccess(f func() error, errHook func(), doneHook func()) {
+func WaitSuccess(f func() error, errHook func(err error), doneHook func()) {
 	for {
 		if err := f(); err != nil {
 			if errHook != nil {
-				errHook()
+				errHook(err)
 			}
 			continue
 		}

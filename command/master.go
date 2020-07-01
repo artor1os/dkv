@@ -64,7 +64,7 @@ func startMaster(options MasterOptions) {
 	}
 	util.WaitSuccess(func() error {
 		return zk.Register(zookeeper.MasterPath, 0, *options.me, addr)
-	}, func() {
+	}, func(err error) {
 		log.WithError(err).
 			WithField("me", *options.me).
 			Info("failed to register master")
