@@ -94,26 +94,3 @@ func (c *Client) Leave(gids []int) {
 		}
 	}
 }
-
-func (c *Client) Move(shard int, gid int) {
-	args := &MoveArgs{}
-	args.Shard = shard
-	args.GID = gid
-	args.RID = c.rid
-	c.rid++
-	args.CID = c.cid
-	i := 0
-	for {
-		reply := MoveReply{}
-		ok := c.servers[c.leader].Call("ShardMaster.Move", args, &reply)
-		if ok && !reply.WrongLeader {
-			return
-		}
-		c.leader++
-		c.leader %= len(c.servers)
-		i++
-		if i%len(c.servers) == 0 {
-			time.Sleep(100 * time.Millisecond)
-		}
-	}
-}

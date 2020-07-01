@@ -35,7 +35,6 @@ type Op struct {
 
 	Join  *JoinInfo
 	Leave *LeaveInfo
-	Move  *MoveInfo
 	Query *QueryInfo
 
 	QueryResult *QueryResult
@@ -49,11 +48,6 @@ type LeaveInfo struct {
 	GIDs []int
 }
 
-type MoveInfo struct {
-	Shard int
-	GID   int
-}
-
 type QueryInfo struct {
 	Num int
 }
@@ -65,7 +59,6 @@ type QueryResult struct {
 const (
 	JoinOp  = "Join"
 	LeaveOp = "Leave"
-	MoveOp  = "Move"
 	QueryOp = "Query"
 )
 
@@ -235,12 +228,6 @@ func (sm *ShardMaster) applyOp(op *Op) {
 			rebalance(config)
 			sm.configs = append(sm.configs, *config)
 		}
-	case MoveOp:
-		if !sm.isDup(op) {
-			config := sm.newConfig()
-			config.Shards[op.Move.Shard] = op.Move.GID
-			sm.configs = append(sm.configs, *config)
-		}
 	case QueryOp:
 		if len(sm.configs) == 0 {
 			op.QueryResult = &QueryResult{Config: Config{
@@ -298,15 +285,6 @@ func (sm *ShardMaster) applyOpZK(op *Op) {
 				panic(err)
 			}
 		}
-	case MoveOp:
-		if !sm.isDup(op) {
-			config, err := sm.newConfigZK()
-			if err != nil {
-				panic(err)
-			}
-			config.Shards[op.Move.Shard] = op.Move.GID
-			sm.configs = append(sm.configs, *config)
-		}
 	case QueryOp:
 		index := op.Query.Num
 		last, err := sm.zk.Last(zookeeper.ConfigPath)
@@ -358,14 +336,6 @@ func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) error {
 	gids := make([]int, len(args.GIDs))
 	copy(gids, args.GIDs)
 	newOp := Op{Type: LeaveOp, RID: args.RID, CID: args.CID, Leave: &LeaveInfo{GIDs: gids}}
-	op := sm.start(newOp)
-
-	reply.WrongLeader = op.WrongLeader
-	return nil
-}
-
-func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) error {
-	newOp := Op{Type: MoveOp, RID: args.RID, CID: args.CID, Move: &MoveInfo{Shard: args.Shard, GID: args.GID}}
 	op := sm.start(newOp)
 
 	reply.WrongLeader = op.WrongLeader

@@ -39,19 +39,6 @@ type LeaveReply struct {
 	Err         Err
 }
 
-type MoveArgs struct {
-	Shard int
-	GID   int
-
-	RID int
-	CID int64
-}
-
-type MoveReply struct {
-	WrongLeader bool
-	Err         Err
-}
-
 type QueryArgs struct {
 	Num int // desired config number
 
