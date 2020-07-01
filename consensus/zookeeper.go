@@ -1,7 +1,9 @@
 package consensus
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"sort"
 	"strconv"
 	"sync"
@@ -54,6 +56,36 @@ type SyncReply struct {
 	LeaderHighWaterMark int
 }
 
+func (z *ZK) persist(snapshot ...[]byte) {
+	w := new(bytes.Buffer)
+	e := json.NewEncoder(w)
+
+	_ = e.Encode(z.log)
+
+	data := w.Bytes()
+	if len(snapshot) > 0 {
+		z.persister.SaveStateAndSnapshot(data, snapshot[0])
+	} else {
+		z.persister.SaveState(data)
+	}
+}
+
+func (z *ZK) readPersist(data []byte) {
+	if data == nil || len(data) < 1 { // bootstrap without any state?
+		return
+	}
+	r := bytes.NewBuffer(data)
+	d := json.NewDecoder(r)
+
+	var l []interface{}
+
+	if d.Decode(&l) != nil {
+		panic("failed to read persist")
+	} else {
+		z.log = l
+	}
+}
+
 func (z *ZK) lastLogIndex() int {
 	return len(z.log) - 1
 }
@@ -92,7 +124,7 @@ func (z *ZK) Sync(args *SyncArgs, reply *SyncReply) (err error) {
 }
 
 func (z *ZK) updateSyncedIndex(server int, index int) {
-	if index <= z.SyncedIndex[server] {
+	if index < z.SyncedIndex[server] {
 		return
 	}
 	z.SyncedIndex[server] = index
@@ -161,6 +193,7 @@ func (z *ZK) sync() {
 			WithField("leaderHighWaterMark", reply.LeaderHighWaterMark).
 			Debug("successfully sync with leader")
 		z.log = append(z.log[:reply.LastRetain+1], reply.Log...)
+		z.persist()
 		z.updateHighWaterMark(reply.LeaderHighWaterMark)
 	}
 	z.mu.Unlock()
@@ -234,6 +267,7 @@ func (z *ZK) fetch(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
+
 			z.sync()
 		case <-ctx.Done():
 			return
@@ -284,7 +318,9 @@ func (z *ZK) wait() {
 					go z.isrChecker()
 					return
 				}
+				z.logger.Info("elected but not in ISR")
 			}
+			z.logger.WithError(r).Info("error occurs while watching")
 			util.WaitSuccess(func() error {
 				if err := z.zk.Delete(node); err != zookeeper.ErrNodeNotExist {
 					return err
@@ -307,6 +343,7 @@ func (z *ZK) Start(command interface{}) (int, bool) {
 	}
 	z.log = append(z.log, command)
 	z.SyncedIndex[z.me] = z.lastLogIndex()
+	z.persist()
 	return z.lastLogIndex(), true
 }
 
@@ -328,6 +365,7 @@ func NewZK(peers []rpc.Endpoint, me int, persister persist.Persister, applyCh ch
 	zk.commitIndexPath = commitIndexPath
 
 	zk.log = make([]interface{}, 1)
+	zk.readPersist(zk.persister.ReadState())
 
 	zk.resetCh = make([]chan struct{}, len(peers))
 	zk.lastFetchedIndex = make([]int, len(peers))

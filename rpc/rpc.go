@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"net/rpc"
+	"time"
 
 	"github.com/artor1os/dkv/zookeeper"
 	log "github.com/sirupsen/logrus"
@@ -23,6 +24,7 @@ type endpoint struct {
 }
 
 const retry = 30
+const retryInterval = time.Millisecond * 100
 
 func (e *endpoint) Call(method string, args interface{}, reply interface{}) bool {
 	if e.addr == "" {
@@ -33,7 +35,8 @@ func (e *endpoint) Call(method string, args interface{}, reply interface{}) bool
 					WithField("path", e.path).
 					WithField("gid", e.gid).
 					WithField("me", e.me).
-					Info("failed to find")
+					Debug("failed to find")
+				time.Sleep(retryInterval)
 				continue
 			}
 			e.addr = addr

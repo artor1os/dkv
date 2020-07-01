@@ -165,7 +165,7 @@ func (rf *Raft) persist(snapshot ...[]byte) {
 	if len(snapshot) > 0 {
 		rf.persister.SaveStateAndSnapshot(data, snapshot[0])
 	} else {
-		rf.persister.SaveRaftState(data)
+		rf.persister.SaveState(data)
 	}
 }
 
@@ -327,7 +327,7 @@ func (rf *Raft) apply() {
 		msg.CommandValid = true
 		msg.CommandIndex = rf.lastApplied
 		msg.Command = rf.log.At(rf.lastApplied).Command
-		msg.RaftStateSize = rf.persister.RaftStateSize()
+		msg.RaftStateSize = rf.persister.StateSize()
 		rf.applyCh <- msg
 		rf.mu.Unlock()
 	}
@@ -895,7 +895,7 @@ func NewRaft(peers []rpc.Endpoint, me int,
 	rf.applyCh = applyCh
 
 	// initialize from state persisted before a crash
-	rf.readPersist(persister.ReadRaftState())
+	rf.readPersist(persister.ReadState())
 	rf.commitIndex = rf.log.LastIncludedIndex
 	rf.lastApplied = rf.log.LastIncludedIndex
 	if persister.SnapshotSize() > 0 {

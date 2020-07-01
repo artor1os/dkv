@@ -139,10 +139,11 @@ func (c *cli) First(path string) (int, error) {
 	if len(children) == 0 {
 		return -1, ErrNoChildren
 	}
+	sort.Strings(children)
 	first := children[0]
 	b, err := c.Data(path + "/" + first)
 	if err != nil {
-		return -1, fmt.Errorf("path: %v, err: %w", path+first, err)
+		return -1, fmt.Errorf("path: %v, err: %w", path+"/"+first, err)
 	}
 	id, err := strconv.Atoi(string(b))
 	if err != nil {
@@ -212,6 +213,7 @@ func (c *cli) Prev(path string, node string) (string, error) {
 	if len(children) == 0 {
 		return "", ErrNoChildren
 	}
+	sort.Strings(children)
 	prev := ""
 	for _, c := range children {
 		c = path + "/" + c
