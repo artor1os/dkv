@@ -315,7 +315,7 @@ func (z *ZK) wait() {
 				if err != nil {
 					panic(err)
 				}
-				z.highWaterMark = hwm
+				z.updateHighWaterMark(hwm)
 				z.logger.WithField("hwm", z.highWaterMark).Info("set highWaterMark")
 				z.log = z.log[:z.highWaterMark+1]
 
