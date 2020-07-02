@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"sort"
 	"strconv"
 	"sync"
@@ -145,9 +146,11 @@ func (z *ZK) updateSyncedIndex(server int, index int) {
 
 	if i >= 0 && len(si) > 0 && si[i] > z.highWaterMark {
 		z.logger.WithField("i", i).WithField("si[i]", si[i]).Info("leader update highWaterMark")
-		if err := z.zk.SetData(z.commitIndexPath, []byte(strconv.Itoa(si[i]))); err != nil {
-			panic(err)
-		}
+		util.WaitSuccess(func() error {
+			return z.zk.SetData(z.commitIndexPath, []byte(strconv.Itoa(si[i])))
+		}, func(err error) {
+			z.logger.WithError(err).Error("failed to update commitIndex on zk")
+		}, nil)
 		z.updateHighWaterMark(si[i])
 	}
 }
@@ -222,9 +225,14 @@ func (z *ZK) getLeader() (int, error) {
 }
 
 func (z *ZK) addISR(server int) {
-	if err := z.zk.Add(z.isrPath, server); err != nil && err != zookeeper.ErrNodeExist {
-		panic(err)
-	}
+	util.WaitSuccess(func() error {
+		if err := z.zk.Add(z.isrPath, server); err != nil && !errors.Is(err, zookeeper.ErrNodeExist) {
+			return err
+		}
+		return nil
+	}, func(err error) {
+		z.logger.WithError(err).WithField("server", server).Error("failed to add isr")
+	}, nil)
 	z.isrSet.Add(server)
 }
 
@@ -254,9 +262,14 @@ func (z *ZK) isrChecker() {
 func (z *ZK) removeFromISR(server int) {
 	z.mu.Lock()
 	defer z.mu.Unlock()
-	if err := z.zk.Remove(z.isrPath, server); err != nil && err != zookeeper.ErrNodeNotExist {
-		panic(err)
-	}
+	util.WaitSuccess(func() error {
+		if err := z.zk.Remove(z.isrPath, server); err != nil && !errors.Is(err, zookeeper.ErrNodeNotExist) {
+			return err
+		}
+		return nil
+	}, func(err error) {
+		z.logger.WithError(err).WithField("server", server).Error("failed to remove isr")
+	}, nil)
 	z.isrSet.Delete(server)
 }
 
@@ -267,7 +280,6 @@ func (z *ZK) fetch(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-
 			z.sync()
 		case <-ctx.Done():
 			return
@@ -286,52 +298,58 @@ func (z *ZK) wait() {
 			continue
 		}
 		z.logger.WithField("node", node).Info("try to elect leader")
-		select {
-		case r := <-elected:
-			if r == nil {
-				if in, err := z.zk.In(z.isrPath, z.me); err == nil && in {
-					z.logger.Info("in ISR, and elected")
+		r := <-elected
+		if r == nil {
+			if in, err := z.zk.In(z.isrPath, z.me); err == nil && in {
+				z.logger.Info("in ISR, and elected")
 
-					b, err := z.zk.Data(z.commitIndexPath)
-					if err != nil {
-						panic(err)
-					}
-					hwm, err := strconv.Atoi(string(b))
-					if err != nil {
-						panic(err)
-					}
-					z.highWaterMark = hwm
-					z.logger.WithField("hwm", z.highWaterMark).Info("set highWaterMark")
-					z.log = z.log[:z.highWaterMark+1]
-
-					isr, err := z.zk.All(z.isrPath)
-					if err != nil {
-						panic(err)
-					}
-					for _, r := range isr {
-						z.isrSet.Add(r)
-					}
-
-					z.SyncedIndex[z.me] = z.lastLogIndex()
-					z.isLeader = true
-					cancel()
-					go z.isrChecker()
-					return
-				}
-				z.logger.Info("elected but not in ISR")
-			}
-			z.logger.WithError(r).Info("error occurs while watching")
-			util.WaitSuccess(func() error {
-				if err := z.zk.Delete(node); err != zookeeper.ErrNodeNotExist {
+				var b []byte
+				util.WaitSuccess(func() error {
+					var err error
+					b, err = z.zk.Data(z.commitIndexPath)
 					return err
+				}, func(err error) {
+					z.logger.WithError(err).Error("failed to update commitIndex on zk")
+				}, nil)
+				hwm, err := strconv.Atoi(string(b))
+				if err != nil {
+					panic(err)
 				}
-				return nil
-			}, func(err error) {
-				z.logger.WithError(err).WithField("node", node).Info("failed to delete election node")
-			}, func() {
-				z.logger.Info("successfully delete election node")
-			})
+				z.highWaterMark = hwm
+				z.logger.WithField("hwm", z.highWaterMark).Info("set highWaterMark")
+				z.log = z.log[:z.highWaterMark+1]
+
+				var isr []int
+				util.WaitSuccess(func() error {
+					var err error
+					isr, err = z.zk.All(z.isrPath)
+					return err
+				}, func(err error) {
+					z.logger.WithError(err).Error("failed to get all isr")
+				}, nil)
+				for _, r := range isr {
+					z.isrSet.Add(r)
+				}
+
+				z.SyncedIndex[z.me] = z.lastLogIndex()
+				z.isLeader = true
+				cancel()
+				go z.isrChecker()
+				return
+			}
+			z.logger.Info("elected but not in ISR")
 		}
+		z.logger.WithError(r).Info("error occurs while watching")
+		util.WaitSuccess(func() error {
+			if err := z.zk.Delete(node); err != nil && !errors.Is(err, zookeeper.ErrNodeNotExist) {
+				return err
+			}
+			return nil
+		}, func(err error) {
+			z.logger.WithError(err).WithField("node", node).Info("failed to delete election node")
+		}, func() {
+			z.logger.Info("successfully delete election node")
+		})
 	}
 }
 

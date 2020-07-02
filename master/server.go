@@ -9,7 +9,9 @@ import (
 	"github.com/artor1os/dkv/consensus"
 	"github.com/artor1os/dkv/persist"
 	"github.com/artor1os/dkv/rpc"
+	"github.com/artor1os/dkv/util"
 	"github.com/artor1os/dkv/zookeeper"
+	log "github.com/sirupsen/logrus"
 )
 
 type ShardMaster struct {
@@ -251,10 +253,14 @@ func (sm *ShardMaster) applyOpZK(op *Op) {
 	switch op.Type {
 	case JoinOp:
 		if !sm.isDup(op) {
-			config, err := sm.newConfigZK()
-			if err != nil {
-				panic(err)
-			}
+			var config *Config
+			util.WaitSuccess(func() error {
+				var err error
+				config, err = sm.newConfigZK()
+				return err
+			}, func(err error) {
+				log.WithError(err).Error("master failed to get new config")
+			}, nil)
 			for k, v := range op.Join.Servers {
 				config.Groups[k] = v
 			}
@@ -263,16 +269,22 @@ func (sm *ShardMaster) applyOpZK(op *Op) {
 			if err != nil {
 				panic(err)
 			}
-			if err := sm.zk.Sequence(zookeeper.ConfigPath, b, config.Num); err != nil {
-				panic(err)
-			}
+			util.WaitSuccess(func() error {
+				return sm.zk.Sequence(zookeeper.ConfigPath, b, config.Num)
+			}, func(err error) {
+				log.WithError(err).Error("master failed to join")
+			}, nil)
 		}
 	case LeaveOp:
 		if !sm.isDup(op) {
-			config, err := sm.newConfigZK()
-			if err != nil {
-				panic(err)
-			}
+			var config *Config
+			util.WaitSuccess(func() error {
+				var err error
+				config, err = sm.newConfigZK()
+				return err
+			}, func(err error) {
+				log.WithError(err).Error("master failed to get new config")
+			}, nil)
 			for _, k := range op.Leave.GIDs {
 				delete(config.Groups, k)
 			}
@@ -281,9 +293,11 @@ func (sm *ShardMaster) applyOpZK(op *Op) {
 			if err != nil {
 				panic(err)
 			}
-			if err := sm.zk.Sequence(zookeeper.ConfigPath, b, config.Num); err != nil {
-				panic(err)
-			}
+			util.WaitSuccess(func() error {
+				return sm.zk.Sequence(zookeeper.ConfigPath, b, config.Num)
+			}, func(err error) {
+				log.WithError(err).Error("master failed to leave")
+			}, nil)
 		}
 	case QueryOp:
 		index := op.Query.Num

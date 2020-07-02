@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
-rm conf/zoo.cfg.dynamic.next
+rm -f conf/zoo.cfg.dynamic.next
 
-rm -r data1
-rm -r data2
-rm -r data3
+rm -rf data1
+rm -rf data2
+rm -rf data3
 
 mkdir data1
 mkdir data2

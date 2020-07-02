@@ -37,7 +37,7 @@ type cli struct {
 }
 
 func New(addrs []string) (*cli, error) {
-	conn, session, err := zk.Connect(addrs, 2*time.Second)
+	conn, session, err := zk.Connect(addrs, 10*time.Second)
 	if err != nil {
 		return nil, err
 	}

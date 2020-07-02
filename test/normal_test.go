@@ -79,7 +79,7 @@ func delete1(t *testing.T, key string) string {
 }
 
 func TestMulti(t *testing.T) {
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 10; i++ {
 		t.Run(fmt.Sprintf("%v", i), TestPutGetAppend)
 	}
 }
