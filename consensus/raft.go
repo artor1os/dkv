@@ -6,7 +6,6 @@ import (
 	"math/rand"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/artor1os/dkv/persist"
@@ -96,9 +95,6 @@ func (log *Logs) RangeFrom(index int) []*LogEntry {
 	return log.Entries[index:]
 }
 
-//
-// A Go object implementing a single Raft peer.
-//
 type Raft struct {
 	mu        sync.Mutex        // Lock to protect shared access to this peer's state
 	peers     []rpc.Endpoint    // RPC end points of all peers
@@ -139,19 +135,6 @@ const (
 	candidate role = "can"
 	leader    role = "lea"
 )
-
-// return currentTerm and whether this server
-// believes it is the leader.
-func (rf *Raft) GetState() (int, bool) {
-
-	var term int
-	var isLeader bool
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	term = rf.currentTerm
-	isLeader = rf.role == leader
-	return term, isLeader
-}
 
 func (rf *Raft) persist(snapshot ...[]byte) {
 	w := new(bytes.Buffer)
@@ -314,10 +297,6 @@ func (rf *Raft) apply() {
 	// If commitIndex > lastApplied: increment lastApplied, apply log[lastApplied] to state machine
 	for {
 		rf.mu.Lock()
-		if rf.killed() {
-			rf.mu.Unlock()
-			return
-		}
 		for !(rf.commitIndex > rf.lastApplied) {
 			rf.applyCond.Wait()
 		}
@@ -541,7 +520,7 @@ func (rf *Raft) majority() int {
 func (rf *Raft) updateMatchIndex(server int, index int) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if rf.killed() || rf.role != leader || rf.matchIndex[server] >= index {
+	if rf.role != leader || rf.matchIndex[server] >= index {
 		return
 	}
 	rf.matchIndex[server] = index
@@ -611,7 +590,7 @@ func (rf *Raft) appendEntries(server int) {
 	for {
 		rf.mu.Lock()
 		// No longer valid AppendEntries
-		if rf.killed() || rf.role != leader {
+		if rf.role != leader {
 			rf.mu.Unlock()
 			return
 		}
@@ -681,9 +660,6 @@ func (rf *Raft) notify() {
 			return
 		case <-rf.notifyCh:
 		case <-ticker.C:
-		}
-		if rf.killed() {
-			return
 		}
 		rf.mu.Lock()
 		if rf.role == leader {
@@ -773,7 +749,7 @@ func (rf *Raft) wait() {
 			continue
 		case <-timer.C:
 			rf.mu.Lock()
-			if rf.killed() || rf.role == leader {
+			if rf.role == leader {
 				rf.mu.Unlock()
 				return
 			}
@@ -856,15 +832,6 @@ func (rf *Raft) DiscardOldLog(index int, snapshot []byte) {
 		rf.persist(snapshot)
 	}
 	rf.mu.Unlock()
-}
-
-func (rf *Raft) Kill() {
-	atomic.StoreInt32(&rf.dead, 1)
-}
-
-func (rf *Raft) killed() bool {
-	z := atomic.LoadInt32(&rf.dead)
-	return z == 1
 }
 
 func NewRaft(peers []rpc.Endpoint, me int,
