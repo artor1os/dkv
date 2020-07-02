@@ -115,7 +115,7 @@ func TestJoinLeave(t *testing.T) {
 }
 
 func TestConcurrentJoinLeave(t *testing.T) {
-	n := 100
+	n := 10
 	local := make(map[string]string)
 	done := make(chan bool)
 	go func() {

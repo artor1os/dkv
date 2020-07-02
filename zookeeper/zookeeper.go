@@ -11,6 +11,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/samuel/go-zookeeper/zk"
+	log "github.com/sirupsen/logrus"
 )
 
 type Controller interface {
@@ -199,7 +200,13 @@ func (c *cli) Delete(path string) error {
 	if !exist {
 		return ErrNodeNotExist
 	}
-	return c.conn.Delete(path, stat.Version)
+	if err := c.conn.Delete(path, stat.Version); err != nil {
+		if errors.Is(err, zk.ErrNoNode) {
+			return ErrNodeNotExist
+		}
+		return err
+	}
+	return nil
 }
 
 func (c *cli) Prev(path string, node string) (string, error) {
@@ -230,7 +237,7 @@ func (c *cli) ElectLeader(path string, id int, elected chan<- error) (string, er
 		return "", err
 	}
 	nodePath := path + "/guid_"
-	me, err := c.conn.CreateProtectedEphemeralSequential(nodePath, []byte(strconv.Itoa(id)), defaultACL)
+	me, err := c.conn.Create(nodePath, []byte(strconv.Itoa(id)), zk.FlagEphemeral|zk.FlagSequence, defaultACL)
 	if err != nil {
 		return "", err
 	}
@@ -241,6 +248,10 @@ func (c *cli) ElectLeader(path string, id int, elected chan<- error) (string, er
 				elected <- err
 				return
 			}
+
+			logger := log.WithField("prev", prev).WithField("me", me)
+
+			logger.Info("detect")
 
 			if prev == "" {
 				elected <- nil
@@ -253,22 +264,26 @@ func (c *cli) ElectLeader(path string, id int, elected chan<- error) (string, er
 				return
 			}
 			if !exist {
+				logger.Info("watch: not exist")
 				continue
 			}
-
+		Loop:
 			for {
 				event := <-events
 				switch event.Type {
 				case zk.EventNodeDeleted:
-					break
+					logger.Info("node deleted")
+					break Loop
 				default:
+					logger.Info("other event, re-watch")
 					exist, _, events, err = c.conn.ExistsW(prev)
 					if err != nil {
 						elected <- err
 						return
 					}
 					if !exist {
-						break
+						logger.Info("re-watch: not exist")
+						break Loop
 					}
 				}
 			}
