@@ -498,7 +498,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	// Reply and wait for more data1 chunks if done is false
 	// Save snapshot file, discard any existing or partial snapshot with a smaller index
 
-	// In this lab, no partition, simply save snapshot
+	// no partition, simply save snapshot
 
 	// If existing log entry has same index and term as snapshot's last included entry, retain log entries following it and reply
 	if args.LastIncludedIndex <= rf.log.LastIncludedIndex {
