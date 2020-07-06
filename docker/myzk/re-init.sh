@@ -2,13 +2,9 @@
 
 rm -f conf/zoo.cfg.dynamic.next
 
-rm -rf data1
-rm -rf data2
-rm -rf data3
-
-mkdir data1
-mkdir data2
-mkdir data3
+rm -f data1/*
+rm -f data2/*
+rm -f data3/*
 
 echo 1 > data1/myid
 echo 2 > data2/myid
