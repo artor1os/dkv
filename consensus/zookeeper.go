@@ -163,6 +163,8 @@ func (z *ZK) updateHighWaterMark(hw int) {
 func (z *ZK) sync() {
 	z.mu.Lock()
 	if z.isLeader {
+		z.logger.Info("leader is me")
+		z.mu.Unlock()
 		return
 	}
 	args := SyncArgs{}
@@ -327,6 +329,7 @@ func (z *ZK) wait() {
 				}, func(err error) {
 					z.logger.WithError(err).Error("failed to get all isr")
 				}, nil)
+				z.isrSet = util.NewSet()
 				for _, r := range isr {
 					z.isrSet.Add(r)
 				}
